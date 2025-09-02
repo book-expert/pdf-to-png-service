@@ -49,11 +49,14 @@ func TestMergeConfigAndFlags(t *testing.T) {
 		{
 			name: "Config values should be used when flags are not provided",
 			baseConfig: config{
-				Paths: struct{ InputDir, OutputDir string }{
-					"/config/in",
-					"/config/out",
-				},
-				Settings: struct{ DPI, Workers int }{150, 2},
+				Paths: struct {
+					InputDir  string `toml:"input_dir"`
+					OutputDir string `toml:"output_dir"`
+				}{InputDir: "/config/in", OutputDir: "/config/out"},
+				Settings: struct {
+					DPI     int `toml:"dpi"`
+					Workers int `toml:"workers"`
+				}{DPI: 150, Workers: 2},
 			},
 			flags:       flags{}, // No flags provided.
 			projectRoot: "/root",
@@ -69,9 +72,9 @@ func TestMergeConfigAndFlags(t *testing.T) {
 			name: "Blank detection values from config should be preserved",
 			baseConfig: config{
 				BlankDetection: struct {
-					FuzzPercent       int
-					NonWhiteThreshold float64
-				}{10, 0.1},
+					FuzzPercent       int     `toml:"fast_fuzz_percent"`
+					NonWhiteThreshold float64 `toml:"fast_non_white_threshold"`
+				}{FuzzPercent: 10, NonWhiteThreshold: 0.1},
 			},
 			flags:       flags{},
 			projectRoot: "/root",
