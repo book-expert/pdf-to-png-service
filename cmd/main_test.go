@@ -132,30 +132,30 @@ func TestMergeConfigAndFlags(t *testing.T) {
 		},
 	}
 
-	for _, tc := range testCases {
-		t.Run(tc.name, func(t *testing.T) {
+	for _, testCase := range testCases {
+		t.Run(testCase.name, func(t *testing.T) {
 			t.Parallel()
 			// Set default values for expected options so we don't have to
 			// repeat them in every test case.
-			if tc.expectedOptions.BlankFuzzPercent == 0 {
-				tc.expectedOptions.BlankFuzzPercent = 5 // Default value
+			if testCase.expectedOptions.BlankFuzzPercent == 0 {
+				testCase.expectedOptions.BlankFuzzPercent = 5 // Default value
 			}
 
-			if tc.expectedOptions.BlankNonWhiteThreshold == 0 {
-				tc.expectedOptions.BlankNonWhiteThreshold = 0.005 // Default value
+			if testCase.expectedOptions.BlankNonWhiteThreshold == 0 {
+				testCase.expectedOptions.BlankNonWhiteThreshold = 0.005 // Default value
 			}
 
 			result := mergeConfigAndFlags(
-				tc.baseConfig,
-				tc.flags,
-				tc.projectRoot,
+				testCase.baseConfig,
+				testCase.flags,
+				testCase.projectRoot,
 			)
 
 			// We don't care about the progress bar output in this test.
 			result.ProgressBarOutput = nil
-			tc.expectedOptions.ProgressBarOutput = nil
+			testCase.expectedOptions.ProgressBarOutput = nil
 
-			assert.Equal(t, tc.expectedOptions, result)
+			assert.Equal(t, testCase.expectedOptions, result)
 		})
 	}
 }

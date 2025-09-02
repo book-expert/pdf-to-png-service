@@ -105,24 +105,24 @@ type flags struct {
 
 // parseFlags defines and parses command-line flags.
 func parseFlags() flags {
-	var f flags
+	var flagsVar flags
 	flag.StringVar(
-		&f.inputPath,
+		&flagsVar.inputPath,
 		"input",
 		"",
 		"Input directory for PDF files (required).",
 	)
 	flag.StringVar(
-		&f.outputPath,
+		&flagsVar.outputPath,
 		"output",
 		"",
 		"Output directory for PNG files (required).",
 	)
-	flag.IntVar(&f.dpi, "dpi", 0, "Resolution in DPI for the output images.")
-	flag.IntVar(&f.workers, "workers", 0, "Number of concurrent workers.")
+	flag.IntVar(&flagsVar.dpi, "dpi", 0, "Resolution in DPI for the output images.")
+	flag.IntVar(&flagsVar.workers, "workers", 0, "Number of concurrent workers.")
 	flag.Parse()
 
-	return f
+	return flagsVar
 }
 
 // mergeConfigAndFlags combines settings from the config file and command-line flags.

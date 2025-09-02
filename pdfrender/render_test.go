@@ -1,112 +1,16 @@
-// File: ./pdfrender/render_test.go
+// Package pdfrender provides PDF-to-PNG conversion functionality.
 package pdfrender
 
 import (
-	"context"
-	"errors"
-	"fmt"
-	"io"
 	"os"
 	"os/exec"
 	"runtime"
-	"strings"
 	"testing"
 
 	"github.com/nnikolov3/logger"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 )
-
-var (
-	ErrUnexpectedMockCall = errors.New("unexpected call to mockExecutor.Run")
-	ErrUnhandledCommand   = errors.New(
-		"unhandled command in mockExecutor.RunCombined",
-	)
-	ErrNoMockResponse = errors.New("no mock response configured for command")
-)
-
-// mockExecutor allows us to simulate the behavior of external commands for testing.
-type mockExecutor struct {
-	// responses maps a command key (e.g., "pdfinfo", "go build") to its expected
-	// output and error.
-	responses map[string]struct {
-		err    error
-		output []byte
-	}
-}
-
-// newMockExecutor creates a new mock executor for use in tests.
-func newMockExecutor() *mockExecutor {
-	return &mockExecutor{responses: make(map[string]struct {
-		err    error
-		output []byte
-	})}
-}
-
-// Run simulates executing a command that only uses stdout.
-func (executor *mockExecutor) Run(
-	_ context.Context,
-	name string,
-	_ ...string,
-) ([]byte, error) {
-	// In our project, only pdfinfo uses the simple 'Run' method.
-	if name == "pdfinfo" {
-		if resp, ok := executor.responses["pdfinfo"]; ok {
-			return resp.output, resp.err
-		}
-	}
-
-	return nil, fmt.Errorf("%w for command: %s", ErrUnexpectedMockCall, name)
-}
-
-// RunCombined simulates executing a command where stdout and stderr are merged.
-func (executor *mockExecutor) RunCombined(
-	_ context.Context,
-	name string,
-	args ...string,
-) ([]byte, error) {
-	var key string
-	// Determine the command key based on the command name and arguments.
-	if name == "go" && len(args) > 1 && args[0] == "build" {
-		key = "go build"
-	} else if name == "ghostscript" {
-		key = "ghostscript"
-	} else if strings.HasSuffix(name, "detect-blank") {
-		key = "detect-blank"
-	} else {
-		return nil, fmt.Errorf("%w: %s", ErrUnhandledCommand, name)
-	}
-
-	if resp, ok := executor.responses[key]; ok {
-		return resp.output, resp.err
-	}
-
-	return nil, fmt.Errorf("%w: %s", ErrNoMockResponse, key)
-}
-
-// newTestProcessor is a helper function to create a Processor with a mock executor for
-// testing.
-func newTestProcessor(test *testing.T) (*Processor, *mockExecutor) {
-	log, err := logger.New(test.TempDir(), "test.log")
-	require.NoError(test, err)
-
-	opts := Options{
-		ProgressBarOutput:      io.Discard, // Disable progress bar output during tests.
-		InputPath:              test.TempDir(),
-		OutputPath:             test.TempDir(),
-		ProjectRoot:            ".", // Assume project root is current dir for tests.
-		DPI:                    0,
-		Workers:                0,
-		BlankFuzzPercent:       0,
-		BlankNonWhiteThreshold: 0,
-	}
-	processor := NewProcessor(opts, log)
-	mockExec := newMockExecutor()
-
-	processor.executor = mockExec // Replace the real executor with our mock.
-
-	return processor, mockExec
-}
 
 func TestNewProcessor_Defaults(t *testing.T) {
 	t.Parallel()

@@ -153,6 +153,7 @@ func imageHasContent(args arguments) (bool, error) {
 
 			if r8 < whiteThreshold || g8 < whiteThreshold ||
 				b8 < whiteThreshold {
+
 				nonWhiteCount++
 			}
 		}
