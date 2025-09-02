@@ -13,11 +13,11 @@ import (
 // settings.
 func TestMergeConfigAndFlags(t *testing.T) {
 	testCases := []struct {
-		name            string
-		baseConfig      config
-		flags           flags
-		projectRoot     string
 		expectedOptions pdfrender.Options
+		baseConfig      config
+		name            string
+		projectRoot     string
+		flags           flags
 	}{
 		{
 			name: "Flags should override all corresponding config values",
@@ -93,6 +93,7 @@ func TestMergeConfigAndFlags(t *testing.T) {
 			if tc.expectedOptions.BlankFuzzPercent == 0 {
 				tc.expectedOptions.BlankFuzzPercent = 5 // Default value
 			}
+
 			if tc.expectedOptions.BlankNonWhiteThreshold == 0 {
 				tc.expectedOptions.BlankNonWhiteThreshold = 0.005 // Default value
 			}

@@ -1,6 +1,6 @@
 .gitignore
-qodana.yaml
-build/
-.gitignore/
-.idea/
+qodana*
+build/*
+.gitignore
+.idea/*
 

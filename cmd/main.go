@@ -23,6 +23,9 @@ type config struct {
 		InputDir  string `toml:"input_dir"`
 		OutputDir string `toml:"output_dir"`
 	} `toml:"paths"`
+	LogsDir struct {
+		PDFToPNG string `toml:"pdf_to_png"`
+	} `toml:"logs_dir"`
 	Settings struct {
 		DPI     int `toml:"dpi"`
 		Workers int `toml:"workers"`
@@ -31,16 +34,14 @@ type config struct {
 		FuzzPercent       int     `toml:"fast_fuzz_percent"`
 		NonWhiteThreshold float64 `toml:"fast_non_white_threshold"`
 	} `toml:"blank_detection"`
-	LogsDir struct {
-		PDFToPNG string `toml:"pdf_to_png"`
-	} `toml:"logs_dir"`
 }
 
 func main() {
 	ctx := context.Background()
 	// The `run` function contains the core application logic.
 	// We call it and then os.Exit to ensure deferred functions are run correctly.
-	if err := run(ctx); err != nil {
+	err := run(ctx)
+	if err != nil {
 		fmt.Fprintf(os.Stderr, "Error: %v\n", err)
 		os.Exit(1)
 	}
@@ -136,12 +137,15 @@ func mergeConfigAndFlags(cfg config, f flags, projectRoot string) pdfrender.Opti
 	if f.inputPath != "" {
 		opts.InputPath = f.inputPath
 	}
+
 	if f.outputPath != "" {
 		opts.OutputPath = f.outputPath
 	}
+
 	if f.dpi > 0 {
 		opts.DPI = f.dpi
 	}
+
 	if f.workers > 0 {
 		opts.Workers = f.workers
 	}

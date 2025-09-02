@@ -64,6 +64,7 @@ func parseAndValidateArguments(args []string) (arguments, error) {
 			err,
 		)
 	}
+
 	if fuzzPercent < 0 || fuzzPercent > 100 {
 		return arguments{}, fmt.Errorf(
 			"fuzz percentage must be between 0 and 100, got %d",
@@ -79,6 +80,7 @@ func parseAndValidateArguments(args []string) (arguments, error) {
 			err,
 		)
 	}
+
 	if threshold < 0 || threshold > 1.0 {
 		return arguments{}, fmt.Errorf(
 			"non-white threshold must be between 0.0 and 1.0, got %f",
@@ -112,6 +114,7 @@ func imageHasContent(args arguments) (bool, error) {
 	}
 
 	bounds := img.Bounds()
+
 	totalPixels := float64(bounds.Dx() * bounds.Dy())
 	if totalPixels == 0 {
 		return false, errors.New("image has zero pixels")
@@ -133,7 +136,6 @@ func imageHasContent(args arguments) (bool, error) {
 
 			if r8 < whiteThreshold || g8 < whiteThreshold ||
 				b8 < whiteThreshold {
-
 				nonWhiteCount++
 			}
 		}

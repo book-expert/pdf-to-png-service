@@ -21,14 +21,17 @@ type mockExecutor struct {
 	// responses maps a command key (e.g., "pdfinfo", "go build") to its expected
 	// output and error.
 	responses map[string]struct {
-		output []byte
 		err    error
+		output []byte
 	}
 }
 
 // newMockExecutor creates a new mock executor for use in tests.
 func newMockExecutor() *mockExecutor {
-	return &mockExecutor{responses: make(map[string]struct{})}
+	return &mockExecutor{responses: make(map[string]struct {
+		err    error
+		output []byte
+	})}
 }
 
 // Run simulates executing a command that only uses stdout.
@@ -86,6 +89,7 @@ func newTestProcessor(test *testing.T) (*Processor, *mockExecutor) {
 	}
 	processor := NewProcessor(opts, log)
 	mockExec := newMockExecutor()
+
 	processor.executor = mockExec // Replace the real executor with our mock.
 
 	return processor, mockExec
@@ -137,11 +141,8 @@ func TestInterpretBlankDetectorExitCode(t *testing.T) {
 	t.Run("Exit code 1 means not blank", func(t *testing.T) {
 		// Create a fake exec.ExitError with code 1.
 		errWithCode1 := &exec.ExitError{ProcessState: &os.ProcessState{}}
-		type code interface{ ExitCode() int }
-		if p, ok := errWithCode1.ProcessState.Sys().(code); ok {
-			// This is a simplified way to set the exit code for testing.
-			// A more robust mock would be needed for complex scenarios.
-		}
+		// Note: we cannot set the exit code on os.ProcessState in a portable way
+		// here.
 
 		isBlank, err := interpretBlankDetectorExitCode(errWithCode1)
 		require.NoError(t, err)

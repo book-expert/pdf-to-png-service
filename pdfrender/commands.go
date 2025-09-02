@@ -103,11 +103,13 @@ func (processor *Processor) renderPage(
 	if page <= 0 {
 		return errors.New("page number must be positive")
 	}
+
 	if pdfPath == "" || outPath == "" {
 		return errors.New("pdf path and output path cannot be empty")
 	}
 
 	args := buildGhostscriptArgs(processor.config.DPI, page, outPath, pdfPath)
+
 	outputBytes, execErr := processor.executor.RunCombined(
 		ctx,
 		"ghostscript",
@@ -153,13 +155,15 @@ func (processor *Processor) handleBlankDetection(
 	}
 
 	if isBlank {
-		if removeErr := os.Remove(pngPath); removeErr != nil {
+		removeErr := os.Remove(pngPath)
+		if removeErr != nil {
 			return fmt.Errorf(
 				"failed to remove blank file %s: %w",
 				pngPath,
 				removeErr,
 			)
 		}
+
 		processor.log.Info("Removed blank: %s", filepath.Base(pngPath))
 	}
 
@@ -222,6 +226,7 @@ func ensureDetectBlankBinary(
 	if projectRoot == "" {
 		return errors.New("projectRoot must be set to auto-build helper binaries")
 	}
+
 	binaryPath := filepath.Join(projectRoot, "bin", "detect-blank")
 	sourcePath := filepath.Join(projectRoot, "cmd", "detect-blank", "main.go")
 
@@ -249,9 +254,11 @@ func buildBlankDetector(
 	log *logger.Logger,
 ) error {
 	log.Info("Detect-blank binary not found. Building from source...")
+
 	binDir := filepath.Dir(binaryPath)
 
-	if mkdirErr := os.MkdirAll(binDir, 0o755); mkdirErr != nil {
+	mkdirErr := os.MkdirAll(binDir, 0o755)
+	if mkdirErr != nil {
 		return fmt.Errorf(
 			"could not create bin directory at %s: %w",
 			binDir,
@@ -261,6 +268,7 @@ func buildBlankDetector(
 
 	// The `-o` flag specifies the output path for the compiled binary.
 	cmd := exec.CommandContext(ctx, "go", "build", "-o", binaryPath, sourcePath)
+
 	output, buildErr := cmd.CombinedOutput()
 	if buildErr != nil {
 		return fmt.Errorf(

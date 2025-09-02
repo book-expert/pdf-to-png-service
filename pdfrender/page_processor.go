@@ -13,8 +13,8 @@ import (
 // pageJob represents a single task for a worker to render one page of a PDF.
 type pageJob struct {
 	pdfPath    string
-	pageIndex  int
 	outputPath string
+	pageIndex  int
 }
 
 // pageProcessor manages the concurrent rendering of pages for a single PDF file.
@@ -39,11 +39,13 @@ func (pp *pageProcessor) processPages(
 	pageCount int,
 ) error {
 	jobs := make(chan pageJob, pageCount)
+
 	var waitGroup sync.WaitGroup
 
 	// Start a pool of worker goroutines.
-	for workerID := 0; workerID < pp.parent.config.Workers; workerID++ {
+	for range pp.parent.config.Workers {
 		waitGroup.Add(1)
+
 		go pp.pageWorker(ctx, &waitGroup, jobs)
 	}
 
@@ -63,6 +65,7 @@ func (pp *pageProcessor) processPages(
 			outputPath: pngPath,
 		}
 	}
+
 	close(jobs) // No more jobs will be sent.
 
 	waitGroup.Wait() // Wait for all workers to finish.
@@ -90,7 +93,8 @@ func (pp *pageProcessor) pageWorker(
 			return
 		}
 
-		if processErr := pp.processSinglePage(ctx, job); processErr != nil {
+		processErr := pp.processSinglePage(ctx, job)
+		if processErr != nil {
 			pp.parent.log.Warn(
 				"Failed to process page %d of %s: %v",
 				job.pageIndex,
@@ -104,12 +108,14 @@ func (pp *pageProcessor) pageWorker(
 // processSinglePage contains the logic for rendering and checking a single page.
 func (pp *pageProcessor) processSinglePage(ctx context.Context, job pageJob) error {
 	// Step 1: Render the PDF page to a PNG image using Ghostscript.
-	if renderErr := pp.parent.renderPage(ctx, job.pdfPath, job.pageIndex, job.outputPath); renderErr != nil {
+	renderErr := pp.parent.renderPage(ctx, job.pdfPath, job.pageIndex, job.outputPath)
+	if renderErr != nil {
 		return fmt.Errorf("rendering failed: %w", renderErr)
 	}
 
 	// Step 2: Check the resulting PNG for blankness and delete it if necessary.
-	if detectionErr := pp.parent.handleBlankDetection(ctx, job.outputPath); detectionErr != nil {
+	detectionErr := pp.parent.handleBlankDetection(ctx, job.outputPath)
+	if detectionErr != nil {
 		// Log this as a warning because the page was still rendered,
 		// but we failed to determine if it was blank.
 		pp.parent.log.Warn(

@@ -21,11 +21,11 @@ func DiscoverPDFs(dirPath string) ([]string, error) {
 	}
 
 	var pdfPaths []string
+
 	for _, entry := range dirEntries {
 		// Ensure we only process files, not directories.
 		if !entry.IsDir() &&
 			strings.HasSuffix(strings.ToLower(entry.Name()), ".pdf") {
-
 			pdfPaths = append(pdfPaths, filepath.Join(dirPath, entry.Name()))
 		}
 	}
@@ -42,11 +42,11 @@ func CountFiles(dirPath, extension string) (int, error) {
 	}
 
 	count := 0
+
 	lowerExt := strings.ToLower(extension)
 	for _, entry := range dirEntries {
 		if !entry.IsDir() &&
 			strings.HasSuffix(strings.ToLower(entry.Name()), lowerExt) {
-
 			count++
 		}
 	}
@@ -62,7 +62,8 @@ func setupOutputDirectory(baseOutputPath, pdfPath string) (string, error) {
 	outputDir := filepath.Join(baseOutputPath, pdfBaseName, "png")
 
 	// Create all necessary parent directories.
-	if mkdirErr := os.MkdirAll(outputDir, 0o750); mkdirErr != nil {
+	mkdirErr := os.MkdirAll(outputDir, 0o750)
+	if mkdirErr != nil {
 		return "", fmt.Errorf(
 			"failed to create output directory %s: %w",
 			outputDir,
