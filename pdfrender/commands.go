@@ -15,6 +15,11 @@ import (
 	"github.com/nnikolov3/logger"
 )
 
+const (
+	// minPagesFieldLength is the minimum expected length for Pages: field parsing.
+	minPagesFieldLength = 2
+)
+
 var (
 	// ErrPDFPathEmpty is returned when a PDF path is empty or not provided.
 	ErrPDFPathEmpty = errors.New("pdf path cannot be empty")
@@ -109,7 +114,7 @@ func parsePdfInfoOutput(output string) (int, error) {
 		line := scanner.Text()
 		if strings.HasPrefix(line, "Pages:") {
 			parts := strings.Fields(line) // e.g., ["Pages:", "123"]
-			if len(parts) >= 2 {
+			if len(parts) >= minPagesFieldLength {
 				pageCount, convErr := strconv.Atoi(parts[1])
 				if convErr == nil {
 					return pageCount, nil

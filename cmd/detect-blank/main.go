@@ -31,6 +31,11 @@ const (
 	exitCodeBlank    = 0 // The image is blank.
 	exitCodeNotBlank = 1 // The image has content.
 	exitCodeError    = 2 // An error occurred (e.g., bad arguments, file not found).
+
+	// Command line argument constants.
+	expectedArgCount = 4
+	percentToRatio   = 100.0
+	maxColorValue    = 255
 )
 
 func main() {
@@ -58,7 +63,7 @@ func main() {
 
 // parseAndValidateArguments processes the raw command-line arguments.
 func parseAndValidateArguments(args []string) (arguments, error) {
-	if len(args) != 4 {
+	if len(args) != expectedArgCount {
 		return arguments{}, fmt.Errorf(
 			"expected 3 arguments, but got %d. Usage: <program> <filepath> <fuzz_percent> <threshold>: %w",
 			len(args)-1,
@@ -102,7 +107,7 @@ func parseAndValidateArguments(args []string) (arguments, error) {
 
 	return arguments{
 		filePath:   args[1],
-		fuzzFactor: float64(fuzzPercent) / 100.0,
+		fuzzFactor: float64(fuzzPercent) / percentToRatio,
 		threshold:  threshold,
 	}, nil
 }
@@ -135,7 +140,7 @@ func imageHasContent(args arguments) (bool, error) {
 	nonWhiteCount := 0.0
 	// The fuzz threshold determines how close to pure white a color can be.
 	// 255 is pure white for a color channel.
-	whiteThreshold := uint32((1.0 - args.fuzzFactor) * 255)
+	whiteThreshold := uint32((1.0 - args.fuzzFactor) * maxColorValue)
 
 	// Iterate over every pixel in the image.
 	for y := bounds.Min.Y; y < bounds.Max.Y; y++ {

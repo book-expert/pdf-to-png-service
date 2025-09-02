@@ -8,6 +8,11 @@ import (
 	"strings"
 )
 
+const (
+	// defaultDirMode is the default permissions for created directories.
+	defaultDirMode = 0o750
+)
+
 // DiscoverPDFs finds all PDF files in a given directory.
 // It performs a case-insensitive search and does not recurse into subdirectories.
 func DiscoverPDFs(dirPath string) ([]string, error) {
@@ -64,7 +69,7 @@ func setupOutputDirectory(baseOutputPath, pdfPath string) (string, error) {
 	outputDir := filepath.Join(baseOutputPath, pdfBaseName, "png")
 
 	// Create all necessary parent directories.
-	mkdirErr := os.MkdirAll(outputDir, 0o750)
+	mkdirErr := os.MkdirAll(outputDir, defaultDirMode)
 	if mkdirErr != nil {
 		return "", fmt.Errorf(
 			"failed to create output directory %s: %w",
