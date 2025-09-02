@@ -10,6 +10,15 @@ import (
 	"strconv"
 )
 
+var (
+	ErrInvalidArguments   = errors.New("invalid number of arguments")
+	ErrInvalidFuzzPercent = errors.New("fuzz percentage must be between 0 and 100")
+	ErrInvalidThreshold   = errors.New(
+		"non-white threshold must be between 0.0 and 1.0",
+	)
+	ErrImageZeroPixels = errors.New("image has zero pixels")
+)
+
 // arguments holds the parsed and validated command-line arguments.
 type arguments struct {
 	filePath   string
@@ -42,17 +51,18 @@ func main() {
 	// Step 3: Exit with the appropriate code based on the analysis.
 	if hasContent {
 		os.Exit(exitCodeNotBlank)
-	} else {
-		os.Exit(exitCodeBlank)
 	}
+
+	os.Exit(exitCodeBlank)
 }
 
 // parseAndValidateArguments processes the raw command-line arguments.
 func parseAndValidateArguments(args []string) (arguments, error) {
 	if len(args) != 4 {
 		return arguments{}, fmt.Errorf(
-			"expected 3 arguments, but got %d. Usage: <program> <filepath> <fuzz_percent> <threshold>",
+			"expected 3 arguments, but got %d. Usage: <program> <filepath> <fuzz_percent> <threshold>: %w",
 			len(args)-1,
+			ErrInvalidArguments,
 		)
 	}
 
@@ -67,8 +77,9 @@ func parseAndValidateArguments(args []string) (arguments, error) {
 
 	if fuzzPercent < 0 || fuzzPercent > 100 {
 		return arguments{}, fmt.Errorf(
-			"fuzz percentage must be between 0 and 100, got %d",
+			"fuzz percentage must be between 0 and 100, got %d: %w",
 			fuzzPercent,
+			ErrInvalidFuzzPercent,
 		)
 	}
 
@@ -83,8 +94,9 @@ func parseAndValidateArguments(args []string) (arguments, error) {
 
 	if threshold < 0 || threshold > 1.0 {
 		return arguments{}, fmt.Errorf(
-			"non-white threshold must be between 0.0 and 1.0, got %f",
+			"non-white threshold must be between 0.0 and 1.0, got %f: %w",
 			threshold,
+			ErrInvalidThreshold,
 		)
 	}
 
@@ -117,7 +129,7 @@ func imageHasContent(args arguments) (bool, error) {
 
 	totalPixels := float64(bounds.Dx() * bounds.Dy())
 	if totalPixels == 0 {
-		return false, errors.New("image has zero pixels")
+		return false, ErrImageZeroPixels
 	}
 
 	nonWhiteCount := 0.0
@@ -136,7 +148,6 @@ func imageHasContent(args arguments) (bool, error) {
 
 			if r8 < whiteThreshold || g8 < whiteThreshold ||
 				b8 < whiteThreshold {
-
 				nonWhiteCount++
 			}
 		}

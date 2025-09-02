@@ -1,4 +1,4 @@
-// File: ./pdfrender/commands.go
+// Package pdfrender provides PDF-to-PNG conversion functionality with command execution.
 package pdfrender
 
 import (
@@ -13,6 +13,25 @@ import (
 	"strings"
 
 	"github.com/nnikolov3/logger"
+)
+
+var (
+	// ErrPDFPathEmpty is returned when a PDF path is empty or not provided.
+	ErrPDFPathEmpty = errors.New("pdf path cannot be empty")
+	// ErrPageNumberMustBePositive is returned when a page number is zero or negative.
+	ErrPageNumberMustBePositive = errors.New("page number must be positive")
+	// ErrPathsCannotBeEmpty is returned when PDF or output paths are empty.
+	ErrPathsCannotBeEmpty = errors.New(
+		"pdf path and output path cannot be empty",
+	)
+	// ErrCouldNotParsePagesLine is returned when pdfinfo output cannot be parsed.
+	ErrCouldNotParsePagesLine = errors.New(
+		"could not parse 'Pages:' line from pdfinfo output",
+	)
+	// ErrProjectRootMustBeSet is returned when project root is required but not set.
+	ErrProjectRootMustBeSet = errors.New(
+		"projectRoot must be set to auto-build helper binaries",
+	)
 )
 
 // CommandExecutor defines an interface for running external commands.
@@ -36,7 +55,12 @@ func (executor *defaultExecutor) Run(
 	name string,
 	args ...string,
 ) ([]byte, error) {
-	return exec.CommandContext(ctx, name, args...).Output()
+	output, err := exec.CommandContext(ctx, name, args...).Output()
+	if err != nil {
+		return nil, fmt.Errorf("command execution failed: %w", err)
+	}
+
+	return output, nil
 }
 
 // RunCombined is the production implementation for executing a command and capturing all
@@ -46,7 +70,12 @@ func (executor *defaultExecutor) RunCombined(
 	name string,
 	args ...string,
 ) ([]byte, error) {
-	return exec.CommandContext(ctx, name, args...).CombinedOutput()
+	output, err := exec.CommandContext(ctx, name, args...).CombinedOutput()
+	if err != nil {
+		return nil, fmt.Errorf("command execution failed: %w", err)
+	}
+
+	return output, nil
 }
 
 // getPDFPages executes the `pdfinfo` command to determine the number of pages in a PDF.
@@ -55,7 +84,7 @@ func (processor *Processor) getPDFPages(
 	pdfPath string,
 ) (int, error) {
 	if pdfPath == "" {
-		return 0, errors.New("pdf path cannot be empty")
+		return 0, ErrPDFPathEmpty
 	}
 
 	// The `pdfinfo` command prints metadata, including the page count, to stdout.
@@ -89,7 +118,7 @@ func parsePdfInfoOutput(output string) (int, error) {
 		}
 	}
 
-	return 0, errors.New("could not parse 'Pages:' line from pdfinfo output")
+	return 0, ErrCouldNotParsePagesLine
 }
 
 // renderPage executes the Ghostscript command to convert a single PDF page to a PNG
@@ -101,11 +130,11 @@ func (processor *Processor) renderPage(
 	outPath string,
 ) error {
 	if page <= 0 {
-		return errors.New("page number must be positive")
+		return ErrPageNumberMustBePositive
 	}
 
 	if pdfPath == "" || outPath == "" {
-		return errors.New("pdf path and output path cannot be empty")
+		return ErrPathsCannotBeEmpty
 	}
 
 	args := buildGhostscriptArgs(processor.config.DPI, page, outPath, pdfPath)
@@ -205,8 +234,9 @@ func interpretBlankDetectorExitCode(execErr error) (bool, error) {
 			// Any other exit code indicates an unexpected error in the
 			// detector tool.
 			return false, fmt.Errorf(
-				"blank detector exited with unexpected code %d",
+				"blank detector exited with unexpected code %d: %w",
 				exitErr.ExitCode(),
+				execErr,
 			)
 		}
 	}
@@ -224,7 +254,7 @@ func ensureDetectBlankBinary(
 	log *logger.Logger,
 ) error {
 	if projectRoot == "" {
-		return errors.New("projectRoot must be set to auto-build helper binaries")
+		return ErrProjectRootMustBeSet
 	}
 
 	binaryPath := filepath.Join(projectRoot, "bin", "detect-blank")
@@ -238,8 +268,9 @@ func ensureDetectBlankBinary(
 	// If the source code is missing, we can't build it.
 	if _, statErr := os.Stat(sourcePath); os.IsNotExist(statErr) {
 		return fmt.Errorf(
-			"cannot build detect-blank: source file not found at %s",
+			"cannot build detect-blank: source file not found at %s: %w",
 			sourcePath,
+			os.ErrNotExist,
 		)
 	}
 

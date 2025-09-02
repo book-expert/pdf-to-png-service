@@ -1,4 +1,4 @@
-// File: ./pdfrender/page_processor.go
+// Package pdfrender provides PDF-to-PNG conversion functionality.
 package pdfrender
 
 import (

@@ -1,6 +1,7 @@
 # Go build artifacts
 /build/
 /bin/
+/.claude/
 
 # Logs
 /logs/
@@ -8,6 +9,7 @@
 # IDE/editor
 /.idea/
 /.vscode/
+/.aiassistant/
 
 # Qodana config and outputs (keep pattern from original)
 qodana*

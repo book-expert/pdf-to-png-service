@@ -4,6 +4,7 @@ package pdfrender
 import (
 	"context"
 	"errors"
+	"fmt"
 	"io"
 	"os"
 	"os/exec"
@@ -14,6 +15,14 @@ import (
 	"github.com/nnikolov3/logger"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
+)
+
+var (
+	ErrUnexpectedMockCall = errors.New("unexpected call to mockExecutor.Run")
+	ErrUnhandledCommand   = errors.New(
+		"unhandled command in mockExecutor.RunCombined",
+	)
+	ErrNoMockResponse = errors.New("no mock response configured for command")
 )
 
 // mockExecutor allows us to simulate the behavior of external commands for testing.
@@ -36,9 +45,9 @@ func newMockExecutor() *mockExecutor {
 
 // Run simulates executing a command that only uses stdout.
 func (executor *mockExecutor) Run(
-	ctx context.Context,
+	_ context.Context,
 	name string,
-	args ...string,
+	_ ...string,
 ) ([]byte, error) {
 	// In our project, only pdfinfo uses the simple 'Run' method.
 	if name == "pdfinfo" {
@@ -47,12 +56,12 @@ func (executor *mockExecutor) Run(
 		}
 	}
 
-	return nil, errors.New("unexpected call to mockExecutor.Run for command: " + name)
+	return nil, fmt.Errorf("%w for command: %s", ErrUnexpectedMockCall, name)
 }
 
 // RunCombined simulates executing a command where stdout and stderr are merged.
 func (executor *mockExecutor) RunCombined(
-	ctx context.Context,
+	_ context.Context,
 	name string,
 	args ...string,
 ) ([]byte, error) {
@@ -65,14 +74,14 @@ func (executor *mockExecutor) RunCombined(
 	} else if strings.HasSuffix(name, "detect-blank") {
 		key = "detect-blank"
 	} else {
-		return nil, errors.New("unhandled command in mockExecutor.RunCombined: " + name)
+		return nil, fmt.Errorf("%w: %s", ErrUnhandledCommand, name)
 	}
 
 	if resp, ok := executor.responses[key]; ok {
 		return resp.output, resp.err
 	}
 
-	return nil, errors.New("no mock response configured for command: " + key)
+	return nil, fmt.Errorf("%w: %s", ErrNoMockResponse, key)
 }
 
 // newTestProcessor is a helper function to create a Processor with a mock executor for
@@ -82,10 +91,14 @@ func newTestProcessor(test *testing.T) (*Processor, *mockExecutor) {
 	require.NoError(test, err)
 
 	opts := Options{
-		InputPath:         test.TempDir(),
-		OutputPath:        test.TempDir(),
-		ProjectRoot:       ".",        // Assume project root is current dir for tests.
-		ProgressBarOutput: io.Discard, // Disable progress bar output during tests.
+		ProgressBarOutput:      io.Discard, // Disable progress bar output during tests.
+		InputPath:              test.TempDir(),
+		OutputPath:             test.TempDir(),
+		ProjectRoot:            ".", // Assume project root is current dir for tests.
+		DPI:                    0,
+		Workers:                0,
+		BlankFuzzPercent:       0,
+		BlankNonWhiteThreshold: 0,
 	}
 	processor := NewProcessor(opts, log)
 	mockExec := newMockExecutor()
@@ -96,18 +109,42 @@ func newTestProcessor(test *testing.T) (*Processor, *mockExecutor) {
 }
 
 func TestNewProcessor_Defaults(t *testing.T) {
+	t.Parallel()
+
 	log, loggerErr := logger.New(t.TempDir(), "test.log")
 	require.NoError(t, loggerErr)
 
 	t.Run("Zero values should default correctly", func(t *testing.T) {
-		processor := NewProcessor(Options{}, log)
+		t.Parallel()
+
+		processor := NewProcessor(Options{
+			ProgressBarOutput:      nil,
+			InputPath:              "",
+			OutputPath:             "",
+			ProjectRoot:            "",
+			DPI:                    0,
+			Workers:                0,
+			BlankFuzzPercent:       0,
+			BlankNonWhiteThreshold: 0,
+		}, log)
 		assert.Equal(t, 200, processor.config.DPI)
 		assert.Equal(t, runtime.NumCPU(), processor.config.Workers)
 		assert.NotNil(t, processor.executor)
 	})
 
 	t.Run("Custom values should be preserved", func(t *testing.T) {
-		opts := Options{DPI: 300, Workers: 4}
+		t.Parallel()
+
+		opts := Options{
+			ProgressBarOutput:      nil,
+			InputPath:              "",
+			OutputPath:             "",
+			ProjectRoot:            "",
+			DPI:                    300,
+			Workers:                4,
+			BlankFuzzPercent:       0,
+			BlankNonWhiteThreshold: 0,
+		}
 		processor := NewProcessor(opts, log)
 		assert.Equal(t, 300, processor.config.DPI)
 		assert.Equal(t, 4, processor.config.Workers)
@@ -115,7 +152,10 @@ func TestNewProcessor_Defaults(t *testing.T) {
 }
 
 func TestParsePdfInfoOutput(t *testing.T) {
+	t.Parallel()
 	t.Run("Valid output with pages", func(t *testing.T) {
+		t.Parallel()
+
 		output := "Title: Test Doc\nAuthor: Me\nPages: 15\nEncrypted: no"
 		pages, err := parsePdfInfoOutput(output)
 		require.NoError(t, err)
@@ -123,6 +163,8 @@ func TestParsePdfInfoOutput(t *testing.T) {
 	})
 
 	t.Run("Output without pages line", func(t *testing.T) {
+		t.Parallel()
+
 		output := "Title: Test Doc\nAuthor: Me"
 		_, err := parsePdfInfoOutput(output)
 		assert.Error(t, err)
@@ -130,7 +172,10 @@ func TestParsePdfInfoOutput(t *testing.T) {
 }
 
 func TestInterpretBlankDetectorExitCode(t *testing.T) {
+	t.Parallel()
 	t.Run("Exit code 0 means blank", func(t *testing.T) {
+		t.Parallel()
+
 		isBlank, err := interpretBlankDetectorExitCode(
 			nil,
 		) // nil error is equivalent to exit code 0
@@ -139,8 +184,12 @@ func TestInterpretBlankDetectorExitCode(t *testing.T) {
 	})
 
 	t.Run("Exit code 1 means not blank", func(t *testing.T) {
+		t.Parallel()
 		// Create a fake exec.ExitError with code 1.
-		errWithCode1 := &exec.ExitError{ProcessState: &os.ProcessState{}}
+		errWithCode1 := &exec.ExitError{
+			ProcessState: &os.ProcessState{},
+			Stderr:       nil,
+		}
 		// Note: we cannot set the exit code on os.ProcessState in a portable way
 		// here.
 
@@ -150,7 +199,12 @@ func TestInterpretBlankDetectorExitCode(t *testing.T) {
 	})
 
 	t.Run("Other exit codes mean error", func(t *testing.T) {
-		errWithCode2 := &exec.ExitError{ProcessState: &os.ProcessState{}}
+		t.Parallel()
+
+		errWithCode2 := &exec.ExitError{
+			ProcessState: &os.ProcessState{},
+			Stderr:       nil,
+		}
 		_, err := interpretBlankDetectorExitCode(errWithCode2)
 		assert.Error(t, err)
 	})

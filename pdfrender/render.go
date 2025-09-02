@@ -1,4 +1,4 @@
-// File: ./pdfrender/render.go
+// Package pdfrender provides PDF-to-PNG conversion functionality.
 package pdfrender
 
 import (
@@ -12,6 +12,17 @@ import (
 
 	"github.com/cheggaaa/pb/v3"
 	"github.com/nnikolov3/logger"
+)
+
+var (
+	// ErrInputPathRequired is returned when input path is not provided.
+	ErrInputPathRequired = errors.New("input path is required")
+	// ErrOutputPathRequired is returned when output path is not provided.
+	ErrOutputPathRequired = errors.New("output path is required")
+	// ErrPDFZeroOrNegativePages is returned when a PDF has invalid page count.
+	ErrPDFZeroOrNegativePages = errors.New(
+		"pdf has zero or a negative number of pages",
+	)
 )
 
 // Options holds all configurable parameters for a Processor.
@@ -90,7 +101,11 @@ func (processor *Processor) Process(ctx context.Context) error {
 	}
 
 	if len(pdfPaths) == 0 {
-		return fmt.Errorf("no PDF files found in %s", processor.config.InputPath)
+		return fmt.Errorf(
+			"no PDF files found in %s: %w",
+			processor.config.InputPath,
+			os.ErrNotExist,
+		)
 	}
 
 	// Step 4: Process each discovered PDF file.
@@ -102,11 +117,11 @@ func (processor *Processor) Process(ctx context.Context) error {
 // validateConfig checks if the essential configuration options have been provided.
 func (processor *Processor) validateConfig() error {
 	if processor.config.InputPath == "" {
-		return errors.New("input path is required")
+		return ErrInputPathRequired
 	}
 
 	if processor.config.OutputPath == "" {
-		return errors.New("output path is required")
+		return ErrOutputPathRequired
 	}
 
 	return nil
@@ -150,7 +165,7 @@ func (processor *Processor) processOnePDF(ctx context.Context, pdfPath string) e
 	}
 
 	if pageCount <= 0 {
-		return errors.New("pdf has zero or a negative number of pages")
+		return ErrPDFZeroOrNegativePages
 	}
 
 	// Create the specific output directory for this PDF's PNGs.

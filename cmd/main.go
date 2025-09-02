@@ -77,14 +77,19 @@ func run(ctx context.Context) error {
 	// Create and run the PDF processor.
 	processor := pdfrender.NewProcessor(options, log)
 
-	return processor.Process(ctx)
+	processErr := processor.Process(ctx)
+	if processErr != nil {
+		return fmt.Errorf("PDF processing failed: %w", processErr)
+	}
+
+	return nil
 }
 
 // loadConfig reads and parses the project.toml file.
 func loadConfig(path string) (config, error) {
 	var cfg config
 	if _, err := toml.DecodeFile(path, &cfg); err != nil {
-		return config{}, err
+		return config{}, fmt.Errorf("failed to decode config file: %w", err)
 	}
 
 	return cfg, nil
@@ -124,6 +129,7 @@ func parseFlags() flags {
 // Flags take precedence over the config file settings.
 func mergeConfigAndFlags(cfg config, f flags, projectRoot string) pdfrender.Options {
 	opts := pdfrender.Options{
+		ProgressBarOutput:      nil,
 		ProjectRoot:            projectRoot,
 		InputPath:              cfg.Paths.InputDir,
 		OutputPath:             cfg.Paths.OutputDir,
@@ -162,5 +168,10 @@ func setupLogger(projectRoot, logDirConfig string) (*logger.Logger, error) {
 
 	logFileName := fmt.Sprintf("log_%s.log", time.Now().Format("20060102_150405"))
 
-	return logger.New(logDir, logFileName)
+	log, err := logger.New(logDir, logFileName)
+	if err != nil {
+		return nil, fmt.Errorf("failed to create logger: %w", err)
+	}
+
+	return log, nil
 }

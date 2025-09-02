@@ -26,10 +26,17 @@ func TestMergeConfigAndFlags(t *testing.T) {
 					InputDir  string `toml:"input_dir"`
 					OutputDir string `toml:"output_dir"`
 				}{InputDir: "/config/in", OutputDir: "/config/out"},
+				LogsDir: struct {
+					PDFToPNG string `toml:"pdf_to_png"`
+				}{PDFToPNG: ""},
 				Settings: struct {
 					DPI     int `toml:"dpi"`
 					Workers int `toml:"workers"`
 				}{DPI: 200, Workers: 4},
+				BlankDetection: struct {
+					FuzzPercent       int     `toml:"fast_fuzz_percent"`
+					NonWhiteThreshold float64 `toml:"fast_non_white_threshold"`
+				}{FuzzPercent: 0, NonWhiteThreshold: 0},
 			},
 			flags: flags{
 				inputPath:  "/flag/in",
@@ -39,11 +46,14 @@ func TestMergeConfigAndFlags(t *testing.T) {
 			},
 			projectRoot: "/root",
 			expectedOptions: pdfrender.Options{
-				ProjectRoot: "/root",
-				InputPath:   "/flag/in",
-				OutputPath:  "/flag/out",
-				DPI:         300,
-				Workers:     8,
+				ProgressBarOutput:      nil,
+				InputPath:              "/flag/in",
+				OutputPath:             "/flag/out",
+				ProjectRoot:            "/root",
+				DPI:                    300,
+				Workers:                8,
+				BlankFuzzPercent:       0,
+				BlankNonWhiteThreshold: 0,
 			},
 		},
 		{
@@ -53,33 +63,69 @@ func TestMergeConfigAndFlags(t *testing.T) {
 					InputDir  string `toml:"input_dir"`
 					OutputDir string `toml:"output_dir"`
 				}{InputDir: "/config/in", OutputDir: "/config/out"},
+				LogsDir: struct {
+					PDFToPNG string `toml:"pdf_to_png"`
+				}{PDFToPNG: ""},
 				Settings: struct {
 					DPI     int `toml:"dpi"`
 					Workers int `toml:"workers"`
 				}{DPI: 150, Workers: 2},
+				BlankDetection: struct {
+					FuzzPercent       int     `toml:"fast_fuzz_percent"`
+					NonWhiteThreshold float64 `toml:"fast_non_white_threshold"`
+				}{FuzzPercent: 0, NonWhiteThreshold: 0},
 			},
-			flags:       flags{}, // No flags provided.
+			flags: flags{
+				inputPath:  "",
+				outputPath: "",
+				dpi:        0,
+				workers:    0,
+			}, // No flags provided.
 			projectRoot: "/root",
 			expectedOptions: pdfrender.Options{
-				ProjectRoot: "/root",
-				InputPath:   "/config/in",
-				OutputPath:  "/config/out",
-				DPI:         150,
-				Workers:     2,
+				ProgressBarOutput:      nil,
+				InputPath:              "/config/in",
+				OutputPath:             "/config/out",
+				ProjectRoot:            "/root",
+				DPI:                    150,
+				Workers:                2,
+				BlankFuzzPercent:       0,
+				BlankNonWhiteThreshold: 0,
 			},
 		},
 		{
 			name: "Blank detection values from config should be preserved",
 			baseConfig: config{
+				Paths: struct {
+					InputDir  string `toml:"input_dir"`
+					OutputDir string `toml:"output_dir"`
+				}{InputDir: "", OutputDir: ""},
+				LogsDir: struct {
+					PDFToPNG string `toml:"pdf_to_png"`
+				}{PDFToPNG: ""},
+				Settings: struct {
+					DPI     int `toml:"dpi"`
+					Workers int `toml:"workers"`
+				}{DPI: 0, Workers: 0},
 				BlankDetection: struct {
 					FuzzPercent       int     `toml:"fast_fuzz_percent"`
 					NonWhiteThreshold float64 `toml:"fast_non_white_threshold"`
 				}{FuzzPercent: 10, NonWhiteThreshold: 0.1},
 			},
-			flags:       flags{},
+			flags: flags{
+				inputPath:  "",
+				outputPath: "",
+				dpi:        0,
+				workers:    0,
+			},
 			projectRoot: "/root",
 			expectedOptions: pdfrender.Options{
+				ProgressBarOutput:      nil,
+				InputPath:              "",
+				OutputPath:             "",
 				ProjectRoot:            "/root",
+				DPI:                    0,
+				Workers:                0,
 				BlankFuzzPercent:       10,
 				BlankNonWhiteThreshold: 0.1,
 			},
@@ -88,6 +134,7 @@ func TestMergeConfigAndFlags(t *testing.T) {
 
 	for _, tc := range testCases {
 		t.Run(tc.name, func(t *testing.T) {
+			t.Parallel()
 			// Set default values for expected options so we don't have to
 			// repeat them in every test case.
 			if tc.expectedOptions.BlankFuzzPercent == 0 {
