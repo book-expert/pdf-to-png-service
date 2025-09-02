@@ -29,9 +29,9 @@ type Options struct {
 
 // Processor encapsulates the logic for processing a batch of PDF files.
 type Processor struct {
-	config   Options
-	log      *logger.Logger
 	executor CommandExecutor
+	log      *logger.Logger
+	config   Options
 }
 
 // NewProcessor creates and initializes a new Processor with the given options and logger.

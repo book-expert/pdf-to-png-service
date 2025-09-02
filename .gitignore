@@ -1,6 +1,20 @@
-.gitignore
+# Go build artifacts
+/build/
+/bin/
+
+# Logs
+/logs/
+
+# IDE/editor
+/.idea/
+/.vscode/
+
+# Qodana config and outputs (keep pattern from original)
 qodana*
-build/*
-.gitignore
-.idea/*
+
+# OS files
+.DS_Store
+
+# Environment files
+.env
 

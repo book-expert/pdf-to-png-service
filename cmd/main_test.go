@@ -13,11 +13,11 @@ import (
 // settings.
 func TestMergeConfigAndFlags(t *testing.T) {
 	testCases := []struct {
-		expectedOptions pdfrender.Options
-		baseConfig      config
 		name            string
 		projectRoot     string
 		flags           flags
+		expectedOptions pdfrender.Options
+		baseConfig      config
 	}{
 		{
 			name: "Flags should override all corresponding config values",
