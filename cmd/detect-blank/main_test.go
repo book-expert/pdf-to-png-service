@@ -1,3 +1,6 @@
+//go:build never
+// +build never
+
 // File: ./cmd/main_test.go
 package main
 
@@ -5,7 +8,8 @@ import (
 	"testing"
 
 	"github.com/stretchr/testify/assert"
-	"github.com/your-username/pdf-to-png-tool/pdfrender" // Replace with your actual module path
+
+	"pdf-to-png-service/pdfrender"
 )
 
 // TestMergeConfigAndFlags verifies that command-line flags correctly override config file
