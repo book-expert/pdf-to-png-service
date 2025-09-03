@@ -160,7 +160,17 @@ func loadImage(filePath string) (image.Image, error) {
 		return nil, fmt.Errorf("could not open file %s: %w", filePath, err)
 	}
 
-	defer func() { _ = file.Close() }()
+	defer func() {
+		cerr := file.Close()
+		if cerr != nil {
+			_, _ = fmt.Fprintf(
+				os.Stderr,
+				"failed to close file %s: %v\n",
+				filePath,
+				cerr,
+			)
+		}
+	}()
 
 	img, _, err := image.Decode(file)
 	if err != nil {

@@ -69,24 +69,10 @@ func run(ctx context.Context) error {
 		return err
 	}
 
-	flags := parseFlags()
-	options := mergeConfigAndFlags(cfg, flags, projectRoot)
+	flgs := parseFlags()
+	options := mergeConfigAndFlags(&cfg, flgs, projectRoot)
 
-	log, err := setupLogger(options.ProjectRoot, cfg.LogsDir.PDFToPNG)
-	if err != nil {
-		return fmt.Errorf("could not set up logger: %w", err)
-	}
-
-	defer func() { _ = log.Close() }()
-
-	processor := pdfrender.NewProcessor(options, log)
-
-	procErr := processor.Process(ctx)
-	if procErr != nil {
-		return fmt.Errorf("PDF processing failed: %w", procErr)
-	}
-
-	return nil
+	return processWithLogger(ctx, &options, cfg.LogsDir.PDFToPNG)
 }
 
 // safeLoadConfig loads the TOML config, allowing missing file without error.
@@ -94,7 +80,9 @@ func safeLoadConfig(path string) (config, error) {
 	cfg, err := loadConfig(path)
 	if err != nil {
 		if errors.Is(err, os.ErrNotExist) {
-			return config{}, nil
+			var emptyCfg config
+
+			return emptyCfg, nil
 		}
 
 		return config{}, fmt.Errorf("error loading config file: %w", err)
@@ -109,7 +97,9 @@ func loadConfig(path string) (config, error) {
 
 	_, err := toml.DecodeFile(path, &cfg)
 	if err != nil {
-		return config{}, fmt.Errorf("failed to decode config file: %w", err)
+		var zero config
+
+		return zero, fmt.Errorf("failed to decode config file: %w", err)
 	}
 
 	return cfg, nil
@@ -147,7 +137,7 @@ func parseFlags() flags {
 
 // mergeConfigAndFlags combines settings from the config file and command-line flags.
 // Flags take precedence over the config file settings.
-func mergeConfigAndFlags(cfg config, f flags, projectRoot string) pdfrender.Options {
+func mergeConfigAndFlags(cfg *config, flgs flags, projectRoot string) pdfrender.Options {
 	opts := pdfrender.Options{
 		ProgressBarOutput:      nil,
 		ProjectRoot:            projectRoot,
@@ -160,23 +150,55 @@ func mergeConfigAndFlags(cfg config, f flags, projectRoot string) pdfrender.Opti
 	}
 
 	// Command-line flags override config file values.
-	if f.inputPath != "" {
-		opts.InputPath = f.inputPath
+	if flgs.inputPath != "" {
+		opts.InputPath = flgs.inputPath
 	}
 
-	if f.outputPath != "" {
-		opts.OutputPath = f.outputPath
+	if flgs.outputPath != "" {
+		opts.OutputPath = flgs.outputPath
 	}
 
-	if f.dpi > 0 {
-		opts.DPI = f.dpi
+	if flgs.dpi > 0 {
+		opts.DPI = flgs.dpi
 	}
 
-	if f.workers > 0 {
-		opts.Workers = f.workers
+	if flgs.workers > 0 {
+		opts.Workers = flgs.workers
 	}
 
 	return opts
+}
+
+// processWithLogger sets up the logger and runs the processor.
+func processWithLogger(
+	ctx context.Context,
+	options *pdfrender.Options,
+	logDir string,
+) error {
+	log, err := setupLogger(options.ProjectRoot, logDir)
+	if err != nil {
+		return fmt.Errorf("could not set up logger: %w", err)
+	}
+
+	defer func() {
+		cerr := log.Close()
+		if cerr != nil {
+			_, _ = fmt.Fprintf(
+				os.Stderr,
+				"failed to close logger: %v\n",
+				cerr,
+			)
+		}
+	}()
+
+	processor := pdfrender.NewProcessor(options, log)
+
+	procErr := processor.Process(ctx)
+	if procErr != nil {
+		return fmt.Errorf("PDF processing failed: %w", procErr)
+	}
+
+	return nil
 }
 
 // setupLogger initializes the logger, creating the log directory if needed.

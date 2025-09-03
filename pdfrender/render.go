@@ -47,11 +47,11 @@ type Processor struct {
 
 // NewProcessor creates and initializes a new Processor with the given options and logger.
 // It sets sensible defaults for any zero-value fields in the Options struct.
-func NewProcessor(opts Options, log *logger.Logger) *Processor {
-	applyDefaultOptions(&opts)
+func NewProcessor(opts *Options, log *logger.Logger) *Processor {
+	applyDefaultOptions(opts)
 
 	return &Processor{
-		config:   opts,
+		config:   *opts,
 		log:      log,
 		executor: &defaultExecutor{}, // Use the real command executor by default.
 	}

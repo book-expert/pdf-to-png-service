@@ -23,7 +23,7 @@ func TestNewProcessor_Defaults(t *testing.T) {
 	t.Run("Zero values should default correctly", func(t *testing.T) {
 		t.Parallel()
 
-		processor := pdfrender.NewProcessor(pdfrender.Options{
+		processor := pdfrender.NewProcessor(&pdfrender.Options{
 			ProgressBarOutput:      nil,
 			InputPath:              "",
 			OutputPath:             "",
@@ -51,7 +51,7 @@ func TestNewProcessor_Defaults(t *testing.T) {
 			BlankFuzzPercent:       0,
 			BlankNonWhiteThreshold: 0,
 		}
-		processor := pdfrender.NewProcessor(opts, log)
+		processor := pdfrender.NewProcessor(&opts, log)
 		cfg := processor.ConfigForTest()
 		assert.Equal(t, 300, cfg.DPI)
 		assert.Equal(t, 4, cfg.Workers)

@@ -20,7 +20,7 @@ func TestMergeConfigAndFlags(t *testing.T) {
 			t.Parallel()
 
 			result := mergeConfigAndFlags(
-				testCase.baseConfig,
+				&testCase.baseConfig,
 				testCase.flags,
 				testCase.projectRoot,
 			)
