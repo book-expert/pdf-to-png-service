@@ -64,34 +64,43 @@ func run(ctx context.Context) error {
 		return fmt.Errorf("could not find project root: %w", err)
 	}
 
-	// Load configuration from the TOML file.
-	cfg, loadErr := loadConfig(configPath)
-	if loadErr != nil && !errors.Is(loadErr, os.ErrNotExist) {
-		return fmt.Errorf("error loading config file: %w", loadErr)
+	cfg, err := safeLoadConfig(configPath)
+	if err != nil {
+		return err
 	}
 
-	// Parse command-line flags, which may override TOML settings.
 	flags := parseFlags()
-
-	// Merge settings from the config file and command-line flags.
 	options := mergeConfigAndFlags(cfg, flags, projectRoot)
 
-	// Set up the application logger.
-	log, logErr := setupLogger(options.ProjectRoot, cfg.LogsDir.PDFToPNG)
-	if logErr != nil {
-		return fmt.Errorf("could not set up logger: %w", logErr)
+	log, err := setupLogger(options.ProjectRoot, cfg.LogsDir.PDFToPNG)
+	if err != nil {
+		return fmt.Errorf("could not set up logger: %w", err)
 	}
-	defer log.Close()
 
-	// Create and run the PDF processor.
+	defer func() { _ = log.Close() }()
+
 	processor := pdfrender.NewProcessor(options, log)
 
-	processErr := processor.Process(ctx)
-	if processErr != nil {
-		return fmt.Errorf("PDF processing failed: %w", processErr)
+	procErr := processor.Process(ctx)
+	if procErr != nil {
+		return fmt.Errorf("PDF processing failed: %w", procErr)
 	}
 
 	return nil
+}
+
+// safeLoadConfig loads the TOML config, allowing missing file without error.
+func safeLoadConfig(path string) (config, error) {
+	cfg, err := loadConfig(path)
+	if err != nil {
+		if errors.Is(err, os.ErrNotExist) {
+			return config{}, nil
+		}
+
+		return config{}, fmt.Errorf("error loading config file: %w", err)
+	}
+
+	return cfg, nil
 }
 
 // loadConfig reads and parses the project.toml file.

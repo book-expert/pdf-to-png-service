@@ -48,31 +48,58 @@ type Processor struct {
 // NewProcessor creates and initializes a new Processor with the given options and logger.
 // It sets sensible defaults for any zero-value fields in the Options struct.
 func NewProcessor(opts Options, log *logger.Logger) *Processor {
-	if opts.DPI <= 0 {
-		opts.DPI = 200
-	}
-
-	if opts.Workers <= 0 {
-		opts.Workers = runtime.NumCPU()
-	}
-
-	if opts.BlankFuzzPercent <= 0 {
-		opts.BlankFuzzPercent = 5
-	}
-
-	if opts.BlankNonWhiteThreshold <= 0 {
-		opts.BlankNonWhiteThreshold = 0.005
-	}
-
-	if opts.ProgressBarOutput == nil {
-		opts.ProgressBarOutput = os.Stdout
-	}
+	applyDefaultOptions(&opts)
 
 	return &Processor{
 		config:   opts,
 		log:      log,
 		executor: &defaultExecutor{}, // Use the real command executor by default.
 	}
+}
+
+const (
+	defaultDPI                    = 200
+	defaultBlankFuzzPercent       = 5
+	defaultBlankNonWhiteThreshold = 0.005
+)
+
+// applyDefaultOptions fills zero-value fields in Options with sensible defaults.
+func applyDefaultOptions(opts *Options) {
+	opts.DPI = defaultIntNonPositive(opts.DPI, defaultDPI)
+	opts.Workers = defaultIntNonPositive(opts.Workers, runtime.NumCPU())
+	opts.BlankFuzzPercent = defaultIntNonPositive(
+		opts.BlankFuzzPercent,
+		defaultBlankFuzzPercent,
+	)
+	opts.BlankNonWhiteThreshold = defaultFloatNonPositive(
+		opts.BlankNonWhiteThreshold,
+		defaultBlankNonWhiteThreshold,
+	)
+	opts.ProgressBarOutput = defaultWriterNil(opts.ProgressBarOutput, os.Stdout)
+}
+
+func defaultIntNonPositive(v, def int) int {
+	if v <= 0 {
+		return def
+	}
+
+	return v
+}
+
+func defaultFloatNonPositive(v, def float64) float64 {
+	if v <= 0 {
+		return def
+	}
+
+	return v
+}
+
+func defaultWriterNil(w, def io.Writer) io.Writer {
+	if w == nil {
+		return def
+	}
+
+	return w
 }
 
 // Process is the main entry point for starting the PDF-to-PNG conversion job.

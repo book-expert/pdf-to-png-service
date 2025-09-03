@@ -109,21 +109,40 @@ func (processor *Processor) getPDFPages(
 // parsePdfInfoOutput scans the text output from the `pdfinfo` command to find and parse
 // the page count.
 func parsePdfInfoOutput(output string) (int, error) {
+	line := findPagesLine(output)
+	if line == "" {
+		return 0, ErrCouldNotParsePagesLine
+	}
+
+	return parsePagesCount(line)
+}
+
+// findPagesLine returns the line starting with "Pages:" or an empty string if not found.
+func findPagesLine(output string) string {
 	scanner := bufio.NewScanner(strings.NewReader(output))
 	for scanner.Scan() {
-		line := scanner.Text()
-		if strings.HasPrefix(line, "Pages:") {
-			parts := strings.Fields(line) // e.g., ["Pages:", "123"]
-			if len(parts) >= minPagesFieldLength {
-				pageCount, convErr := strconv.Atoi(parts[1])
-				if convErr == nil {
-					return pageCount, nil
-				}
-			}
+		text := scanner.Text()
+		if strings.HasPrefix(text, "Pages:") {
+			return text
 		}
 	}
 
-	return 0, ErrCouldNotParsePagesLine
+	return ""
+}
+
+// parsePagesCount extracts the integer page count from a "Pages:" line.
+func parsePagesCount(line string) (int, error) {
+	parts := strings.Fields(line)
+	if len(parts) < minPagesFieldLength {
+		return 0, ErrCouldNotParsePagesLine
+	}
+
+	pageCount, err := strconv.Atoi(parts[1])
+	if err != nil {
+		return 0, ErrCouldNotParsePagesLine
+	}
+
+	return pageCount, nil
 }
 
 // renderPage executes the Ghostscript command to convert a single PDF page to a PNG
@@ -295,7 +314,7 @@ func buildBlankDetector(
 
 	binDir := filepath.Dir(binaryPath)
 
-	mkdirErr := os.MkdirAll(binDir, 0o755)
+	mkdirErr := os.MkdirAll(binDir, defaultDirMode)
 	if mkdirErr != nil {
 		return fmt.Errorf(
 			"could not create bin directory at %s: %w",
