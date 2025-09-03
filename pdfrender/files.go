@@ -31,6 +31,7 @@ func DiscoverPDFs(dirPath string) ([]string, error) {
 		// Ensure we only process files, not directories.
 		if !entry.IsDir() &&
 			strings.HasSuffix(strings.ToLower(entry.Name()), ".pdf") {
+
 			pdfPaths = append(pdfPaths, filepath.Join(dirPath, entry.Name()))
 		}
 	}
