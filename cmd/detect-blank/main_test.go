@@ -1,4 +1,9 @@
-// File: ./cmd/detect-blank/main_test.go
+// Tests for the detect-blank command.
+//
+// This suite verifies:
+// - Argument parsing and validation rules.
+// - Image content detection across edge cases (zero pixels, near-white, thresholds).
+// - Error propagation for unreadable or invalid images.
 package main
 
 import (

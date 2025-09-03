@@ -1,4 +1,15 @@
-// File: ./cmd/detect-blank/main.go
+// Command detect-blank analyzes a PNG image and exits with a code indicating
+// whether the image is blank (mostly white) or contains content.
+//
+// Usage: detect-blank <filepath> <fuzz_percent> <non_white_threshold>
+// - fuzz_percent: 0..100 tolerated deviation from pure white (higher = more tolerant)
+// - non_white_threshold: 0.0..1.0 minimum ratio of non-white pixels to consider content
+//
+// Exit codes:
+//
+//	0 = blank image
+//	1 = image has content
+//	2 = error (bad args, cannot open/parse image, etc.)
 package main
 
 import (

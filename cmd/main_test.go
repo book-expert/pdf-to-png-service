@@ -1,4 +1,8 @@
-// File: ./cmd/main_test.go
+// Tests for the main pdf-to-png-service CLI.
+//
+// Focus areas:
+// - mergeConfigAndFlags behavior: flags override config; config provides defaults.
+// - Struct shapes for Options and config mappings.
 package main
 
 import (

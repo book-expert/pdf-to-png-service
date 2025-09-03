@@ -1,4 +1,14 @@
-// File: ./cmd/main.go
+// Command pdf-to-png-service is the CLI entry point that reads configuration
+// from project.toml and command-line flags, sets up logging, and invokes the
+// pdfrender package to convert PDF files in an input directory to PNG images.
+//
+// Responsibilities:
+// - Discover project root and load config (if present).
+// - Parse flags that override config values.
+// - Initialize a rotating logger under logs/pdf_to_png by default.
+// - Construct pdfrender.Options and run the processing pipeline.
+//
+// Exit status: non-zero on any fatal error; logs provide detailed context.
 package main
 
 import (
