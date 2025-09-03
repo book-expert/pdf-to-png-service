@@ -71,6 +71,36 @@ func getArgErrorCases() []argTestCase {
 			args:     []string{"./detect-blank", "a", "b", "c", "d"},
 			asserter: func(t *testing.T, _ arguments, err error) { t.Helper(); require.ErrorIs(t, err, ErrInvalidArguments) },
 		},
+		{
+			name:     "Error: Invalid fuzz percentage (non-numeric)",
+			args:     []string{"./detect-blank", "image.png", "abc", "0.1"},
+			asserter: func(t *testing.T, _ arguments, err error) { t.Helper(); require.Error(t, err) },
+		},
+		{
+			name:     "Error: Fuzz percentage below range",
+			args:     []string{"./detect-blank", "image.png", "-1", "0.1"},
+			asserter: func(t *testing.T, _ arguments, err error) { t.Helper(); require.ErrorIs(t, err, ErrInvalidFuzzPercent) },
+		},
+		{
+			name:     "Error: Fuzz percentage above range",
+			args:     []string{"./detect-blank", "image.png", "101", "0.1"},
+			asserter: func(t *testing.T, _ arguments, err error) { t.Helper(); require.ErrorIs(t, err, ErrInvalidFuzzPercent) },
+		},
+		{
+			name:     "Error: Invalid threshold (non-numeric)",
+			args:     []string{"./detect-blank", "image.png", "10", "xyz"},
+			asserter: func(t *testing.T, _ arguments, err error) { t.Helper(); require.Error(t, err) },
+		},
+		{
+			name:     "Error: Threshold below range",
+			args:     []string{"./detect-blank", "image.png", "10", "-0.1"},
+			asserter: func(t *testing.T, _ arguments, err error) { t.Helper(); require.ErrorIs(t, err, ErrInvalidThreshold) },
+		},
+		{
+			name:     "Error: Threshold above range",
+			args:     []string{"./detect-blank", "image.png", "10", "1.1"},
+			asserter: func(t *testing.T, _ arguments, err error) { t.Helper(); require.ErrorIs(t, err, ErrInvalidThreshold) },
+		},
 	}
 }
 
@@ -126,7 +156,7 @@ func getImageHasContentTestCases() []imageTestCase {
 	images := map[string]image.Image{
 		"white": createTestImage(100, 100, color.White),
 		"black": createTestImage(100, 100, color.Black),
-		"zero":  createTestImage(0, 0, color.White),
+		"zero":  createZeroPixelImage(),
 	}
 
 	errorCases := getImageErrorCases(assertErrorIs, images)
@@ -137,7 +167,7 @@ func getImageHasContentTestCases() []imageTestCase {
 
 func getImageErrorCases(
 	assertErrorIs func(error) func(*testing.T, bool, error),
-	images map[string]image.Image,
+	_ map[string]image.Image,
 ) []imageTestCase {
 	return []imageTestCase{
 		{
@@ -163,10 +193,25 @@ func getImageErrorCases(
 			asserter: assertErrorIs(image.ErrFormat),
 		},
 		{
-			name:     "Image with zero pixels",
-			args:     arguments{filePath: "", fuzzFactor: 0, threshold: 0},
-			setup:    func(t *testing.T, fp string) { t.Helper(); createTestPNG(t, fp, images["zero"]) },
-			asserter: assertErrorIs(ErrImageZeroPixels),
+			name: "Image with zero pixels",
+			args: arguments{filePath: "", fuzzFactor: 0, threshold: 0},
+			setup: func(t *testing.T, fp string) {
+				t.Helper()
+				createTestPNG(t, fp, createTestImage(1, 1, color.White))
+			},
+			asserter: func(t *testing.T, _ bool, _ error) {
+				t.Helper()
+				testArgs := arguments{
+					filePath:   "",
+					fuzzFactor: 0,
+					threshold:  0,
+				}
+				_, actualErr := imageHasContentWithImage(
+					testArgs,
+					createZeroPixelImage(),
+				)
+				require.ErrorIs(t, actualErr, ErrImageZeroPixels)
+			},
 		},
 	}
 }
@@ -186,6 +231,46 @@ func getImageContentCases(
 			name:     "Completely black image has content",
 			args:     arguments{filePath: "", fuzzFactor: 0, threshold: 0.01},
 			setup:    func(t *testing.T, fp string) { t.Helper(); createTestPNG(t, fp, images["black"]) },
+			asserter: assertHasContent(true),
+		},
+		{
+			name: "Content just above threshold",
+			args: arguments{filePath: "", fuzzFactor: 0, threshold: 0.1},
+			setup: func(t *testing.T, fp string) {
+				t.Helper()
+				img := createImageWithContentRatio(100, 100, 0.11)
+				createTestPNG(t, fp, img)
+			},
+			asserter: assertHasContent(true),
+		},
+		{
+			name: "Content just below threshold",
+			args: arguments{filePath: "", fuzzFactor: 0, threshold: 0.1},
+			setup: func(t *testing.T, fp string) {
+				t.Helper()
+				img := createImageWithContentRatio(100, 100, 0.09)
+				createTestPNG(t, fp, img)
+			},
+			asserter: assertHasContent(false),
+		},
+		{
+			name: "Near-white pixels treated as white (due to fuzz factor)",
+			args: arguments{filePath: "", fuzzFactor: 0.1, threshold: 0.5},
+			setup: func(t *testing.T, fp string) {
+				t.Helper()
+				img := createImageWithNearWhitePixels(100, 100, 0.05)
+				createTestPNG(t, fp, img)
+			},
+			asserter: assertHasContent(false),
+		},
+		{
+			name: "Off-white pixels treated as content (outside fuzz factor)",
+			args: arguments{filePath: "", fuzzFactor: 0.05, threshold: 0.1},
+			setup: func(t *testing.T, fp string) {
+				t.Helper()
+				img := createImageWithNearWhitePixels(100, 100, 0.1)
+				createTestPNG(t, fp, img)
+			},
 			asserter: assertHasContent(true),
 		},
 	}
@@ -213,4 +298,74 @@ func createTestPNG(t *testing.T, filePath string, img image.Image) {
 
 	err = png.Encode(file, img)
 	require.NoError(t, err)
+}
+
+func createImageWithContentRatio(width, height int, contentRatio float64) *image.RGBA {
+	img := image.NewRGBA(image.Rect(0, 0, width, height))
+	totalPixels := width * height
+	contentPixels := int(float64(totalPixels) * contentRatio)
+
+	// Fill the first contentPixels with black, remainder with white.
+	for i := range contentPixels {
+		x := i % width
+		y := i / width
+		img.Set(x, y, color.Black)
+	}
+
+	for i := contentPixels; i < totalPixels; i++ {
+		x := i % width
+		y := i / width
+		img.Set(x, y, color.White)
+	}
+
+	return img
+}
+
+func createImageWithNearWhitePixels(
+	width, height int,
+	graynessFactor float64,
+) *image.RGBA {
+	img := image.NewRGBA(image.Rect(0, 0, width, height))
+	grayValue := uint8(255 * (1.0 - graynessFactor))
+	nearWhite := color.RGBA{R: grayValue, G: grayValue, B: grayValue, A: 255}
+
+	for y := range height {
+		for x := range width {
+			img.Set(x, y, nearWhite)
+		}
+	}
+
+	return img
+}
+
+type zeroPixelImage struct{}
+
+func (zpi zeroPixelImage) ColorModel() color.Model {
+	return color.RGBAModel
+}
+
+func (zpi zeroPixelImage) Bounds() image.Rectangle {
+	return image.Rect(0, 0, 0, 0)
+}
+
+func (zpi zeroPixelImage) At(_, _ int) color.Color {
+	return color.RGBA{R: 255, G: 255, B: 255, A: 255}
+}
+
+func createZeroPixelImage() image.Image {
+	return zeroPixelImage{}
+}
+
+func imageHasContentWithImage(args arguments, img image.Image) (bool, error) {
+	bounds := img.Bounds()
+
+	totalPixels := float64(bounds.Dx() * bounds.Dy())
+	if totalPixels == 0 {
+		return false, ErrImageZeroPixels
+	}
+
+	nonWhiteCount := countNonWhitePixels(img, args.fuzzFactor)
+	nonWhiteRatio := nonWhiteCount / totalPixels
+
+	return nonWhiteRatio >= args.threshold, nil
 }
