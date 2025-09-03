@@ -13,4 +13,4 @@ func InterpretBlankDetectorExitCodeForTest(err error) (bool, error) {
 }
 
 // ConfigForTest returns a copy of the processor configuration for assertions in tests.
-func (p *Processor) ConfigForTest() Options { return p.config }
+func (processor *Processor) ConfigForTest() Options { return processor.config }

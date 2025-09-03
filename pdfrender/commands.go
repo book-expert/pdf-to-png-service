@@ -145,6 +145,15 @@ func parsePagesCount(line string) (int, error) {
 	return pageCount, nil
 }
 
+// validateNonEmptyPaths ensures required file paths are provided.
+func validateNonEmptyPaths(pdfPath, outPath string) error {
+	if pdfPath == "" || outPath == "" {
+		return ErrPathsCannotBeEmpty
+	}
+
+	return nil
+}
+
 // renderPage executes the Ghostscript command to convert a single PDF page to a PNG
 // image.
 func (processor *Processor) renderPage(
@@ -157,21 +166,22 @@ func (processor *Processor) renderPage(
 		return ErrPageNumberMustBePositive
 	}
 
-	if pdfPath == "" || outPath == "" {
-		return ErrPathsCannotBeEmpty
+	err := validateNonEmptyPaths(pdfPath, outPath)
+	if err != nil {
+		return err
 	}
 
 	args := buildGhostscriptArgs(processor.config.DPI, page, outPath, pdfPath)
 
-	outputBytes, execErr := processor.executor.RunCombined(
+	output, err := processor.executor.RunCombined(
 		ctx,
 		"ghostscript",
 		args...)
-	if execErr != nil {
+	if err != nil {
 		return fmt.Errorf(
 			"ghostscript execution failed: %w. Output: %s",
-			execErr,
-			string(outputBytes),
+			err,
+			string(output),
 		)
 	}
 

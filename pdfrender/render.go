@@ -106,12 +106,31 @@ func defaultWriterNil(w, def io.Writer) io.Writer {
 // It discovers PDFs, builds the helper binary, and processes each file sequentially.
 func (processor *Processor) Process(ctx context.Context) error {
 	// Step 1: Validate the configuration before starting any work.
-	validationErr := processor.validateConfig()
-	if validationErr != nil {
-		return validationErr
+	err := processor.validateConfig()
+	if err != nil {
+		return err
 	}
 
-	// Step 2: Ensure the `detect-blank` helper binary is built and available.
+	// Step 2: Prepare helper tooling required for processing.
+	err = processor.prepareTools(ctx)
+	if err != nil {
+		return err
+	}
+
+	// Step 3: Discover all PDF files in the input directory.
+	pdfPaths, err := processor.discoverInputPDFs()
+	if err != nil {
+		return err
+	}
+
+	// Step 4: Process each discovered PDF file.
+	processor.log.Info("Found %d PDF(s) to process.", len(pdfPaths))
+
+	return processor.processAllPDFs(ctx, pdfPaths)
+}
+
+// prepareTools ensures required helper binaries are available before processing.
+func (processor *Processor) prepareTools(ctx context.Context) error {
 	buildErr := ensureDetectBlankBinary(
 		ctx,
 		processor.config.ProjectRoot,
@@ -121,24 +140,25 @@ func (processor *Processor) Process(ctx context.Context) error {
 		return fmt.Errorf("could not prepare blank detection tool: %w", buildErr)
 	}
 
-	// Step 3: Discover all PDF files in the input directory.
+	return nil
+}
+
+// discoverInputPDFs discovers input PDFs and validates non-empty result.
+func (processor *Processor) discoverInputPDFs() ([]string, error) {
 	pdfPaths, discoveryErr := DiscoverPDFs(processor.config.InputPath)
 	if discoveryErr != nil {
-		return fmt.Errorf("failed to discover PDFs: %w", discoveryErr)
+		return nil, fmt.Errorf("failed to discover PDFs: %w", discoveryErr)
 	}
 
 	if len(pdfPaths) == 0 {
-		return fmt.Errorf(
+		return nil, fmt.Errorf(
 			"no PDF files found in %s: %w",
 			processor.config.InputPath,
 			os.ErrNotExist,
 		)
 	}
 
-	// Step 4: Process each discovered PDF file.
-	processor.log.Info("Found %d PDF(s) to process.", len(pdfPaths))
-
-	return processor.processAllPDFs(ctx, pdfPaths)
+	return pdfPaths, nil
 }
 
 // validateConfig checks if the essential configuration options have been provided.
