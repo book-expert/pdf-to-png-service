@@ -17,23 +17,32 @@ import (
 	"pdf-to-png-service/pdfrender"
 )
 
-// config represents the structure of the project.toml file.
+// Define named types for each section of the configuration.
+type configPaths struct {
+	InputDir  string `toml:"input_dir"`
+	OutputDir string `toml:"output_dir"`
+}
+
+type configLogsDir struct {
+	PDFToPNG string `toml:"pdf_to_png"`
+}
+
+type configSettings struct {
+	DPI     int `toml:"dpi"`
+	Workers int `toml:"workers"`
+}
+
+type configBlankDetection struct {
+	FuzzPercent       int     `toml:"fast_fuzz_percent"`
+	NonWhiteThreshold float64 `toml:"fast_non_white_threshold"`
+}
+
+// config represents the structure of the project.toml file, now using named types.
 type config struct {
-	Paths struct {
-		InputDir  string `toml:"input_dir"`
-		OutputDir string `toml:"output_dir"`
-	} `toml:"paths"`
-	LogsDir struct {
-		PDFToPNG string `toml:"pdf_to_png"`
-	} `toml:"logs_dir"`
-	Settings struct {
-		DPI     int `toml:"dpi"`
-		Workers int `toml:"workers"`
-	} `toml:"settings"`
-	BlankDetection struct {
-		FuzzPercent       int     `toml:"fast_fuzz_percent"`
-		NonWhiteThreshold float64 `toml:"fast_non_white_threshold"`
-	} `toml:"blank_detection"`
+	Paths          configPaths          `toml:"paths"`
+	LogsDir        configLogsDir        `toml:"logs_dir"`
+	Settings       configSettings       `toml:"settings"`
+	BlankDetection configBlankDetection `toml:"blank_detection"`
 }
 
 func main() {
@@ -88,7 +97,9 @@ func run(ctx context.Context) error {
 // loadConfig reads and parses the project.toml file.
 func loadConfig(path string) (config, error) {
 	var cfg config
-	if _, err := toml.DecodeFile(path, &cfg); err != nil {
+
+	_, err := toml.DecodeFile(path, &cfg)
+	if err != nil {
 		return config{}, fmt.Errorf("failed to decode config file: %w", err)
 	}
 

@@ -266,12 +266,14 @@ func ensureDetectBlankBinary(
 	sourcePath := filepath.Join(projectRoot, "cmd", "detect-blank", "main.go")
 
 	// If the binary already exists, we don't need to do anything.
-	if _, statErr := os.Stat(binaryPath); statErr == nil {
+	_, statErr := os.Stat(binaryPath)
+	if statErr == nil {
 		return nil
 	}
 
 	// If the source code is missing, we can't build it.
-	if _, statErr := os.Stat(sourcePath); os.IsNotExist(statErr) {
+	_, statErr = os.Stat(sourcePath)
+	if os.IsNotExist(statErr) {
 		return fmt.Errorf(
 			"cannot build detect-blank: source file not found at %s: %w",
 			sourcePath,

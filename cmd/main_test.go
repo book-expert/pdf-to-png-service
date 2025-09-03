@@ -2,6 +2,7 @@
 package main
 
 import (
+	"io"
 	"testing"
 
 	"github.com/stretchr/testify/assert"
@@ -9,141 +10,14 @@ import (
 	"pdf-to-png-service/pdfrender"
 )
 
-// TestMergeConfigAndFlags verifies that command-line flags correctly override config file
-// settings.
 func TestMergeConfigAndFlags(t *testing.T) {
-	testCases := []struct {
-		name            string
-		projectRoot     string
-		flags           flags
-		expectedOptions pdfrender.Options
-		baseConfig      config
-	}{
-		{
-			name: "Flags should override all corresponding config values",
-			baseConfig: config{
-				Paths: struct {
-					InputDir  string `toml:"input_dir"`
-					OutputDir string `toml:"output_dir"`
-				}{InputDir: "/config/in", OutputDir: "/config/out"},
-				LogsDir: struct {
-					PDFToPNG string `toml:"pdf_to_png"`
-				}{PDFToPNG: ""},
-				Settings: struct {
-					DPI     int `toml:"dpi"`
-					Workers int `toml:"workers"`
-				}{DPI: 200, Workers: 4},
-				BlankDetection: struct {
-					FuzzPercent       int     `toml:"fast_fuzz_percent"`
-					NonWhiteThreshold float64 `toml:"fast_non_white_threshold"`
-				}{FuzzPercent: 0, NonWhiteThreshold: 0},
-			},
-			flags: flags{
-				inputPath:  "/flag/in",
-				outputPath: "/flag/out",
-				dpi:        300,
-				workers:    8,
-			},
-			projectRoot: "/root",
-			expectedOptions: pdfrender.Options{
-				ProgressBarOutput:      nil,
-				InputPath:              "/flag/in",
-				OutputPath:             "/flag/out",
-				ProjectRoot:            "/root",
-				DPI:                    300,
-				Workers:                8,
-				BlankFuzzPercent:       0,
-				BlankNonWhiteThreshold: 0,
-			},
-		},
-		{
-			name: "Config values should be used when flags are not provided",
-			baseConfig: config{
-				Paths: struct {
-					InputDir  string `toml:"input_dir"`
-					OutputDir string `toml:"output_dir"`
-				}{InputDir: "/config/in", OutputDir: "/config/out"},
-				LogsDir: struct {
-					PDFToPNG string `toml:"pdf_to_png"`
-				}{PDFToPNG: ""},
-				Settings: struct {
-					DPI     int `toml:"dpi"`
-					Workers int `toml:"workers"`
-				}{DPI: 150, Workers: 2},
-				BlankDetection: struct {
-					FuzzPercent       int     `toml:"fast_fuzz_percent"`
-					NonWhiteThreshold float64 `toml:"fast_non_white_threshold"`
-				}{FuzzPercent: 0, NonWhiteThreshold: 0},
-			},
-			flags: flags{
-				inputPath:  "",
-				outputPath: "",
-				dpi:        0,
-				workers:    0,
-			}, // No flags provided.
-			projectRoot: "/root",
-			expectedOptions: pdfrender.Options{
-				ProgressBarOutput:      nil,
-				InputPath:              "/config/in",
-				OutputPath:             "/config/out",
-				ProjectRoot:            "/root",
-				DPI:                    150,
-				Workers:                2,
-				BlankFuzzPercent:       0,
-				BlankNonWhiteThreshold: 0,
-			},
-		},
-		{
-			name: "Blank detection values from config should be preserved",
-			baseConfig: config{
-				Paths: struct {
-					InputDir  string `toml:"input_dir"`
-					OutputDir string `toml:"output_dir"`
-				}{InputDir: "", OutputDir: ""},
-				LogsDir: struct {
-					PDFToPNG string `toml:"pdf_to_png"`
-				}{PDFToPNG: ""},
-				Settings: struct {
-					DPI     int `toml:"dpi"`
-					Workers int `toml:"workers"`
-				}{DPI: 0, Workers: 0},
-				BlankDetection: struct {
-					FuzzPercent       int     `toml:"fast_fuzz_percent"`
-					NonWhiteThreshold float64 `toml:"fast_non_white_threshold"`
-				}{FuzzPercent: 10, NonWhiteThreshold: 0.1},
-			},
-			flags: flags{
-				inputPath:  "",
-				outputPath: "",
-				dpi:        0,
-				workers:    0,
-			},
-			projectRoot: "/root",
-			expectedOptions: pdfrender.Options{
-				ProgressBarOutput:      nil,
-				InputPath:              "",
-				OutputPath:             "",
-				ProjectRoot:            "/root",
-				DPI:                    0,
-				Workers:                0,
-				BlankFuzzPercent:       10,
-				BlankNonWhiteThreshold: 0.1,
-			},
-		},
-	}
+	t.Parallel()
+
+	testCases := getMergeConfigAndFlagsTestCases()
 
 	for _, testCase := range testCases {
 		t.Run(testCase.name, func(t *testing.T) {
 			t.Parallel()
-			// Set default values for expected options so we don't have to
-			// repeat them in every test case.
-			if testCase.expectedOptions.BlankFuzzPercent == 0 {
-				testCase.expectedOptions.BlankFuzzPercent = 5 // Default value
-			}
-
-			if testCase.expectedOptions.BlankNonWhiteThreshold == 0 {
-				testCase.expectedOptions.BlankNonWhiteThreshold = 0.005 // Default value
-			}
 
 			result := mergeConfigAndFlags(
 				testCase.baseConfig,
@@ -151,11 +25,98 @@ func TestMergeConfigAndFlags(t *testing.T) {
 				testCase.projectRoot,
 			)
 
-			// We don't care about the progress bar output in this test.
-			result.ProgressBarOutput = nil
-			testCase.expectedOptions.ProgressBarOutput = nil
-
 			assert.Equal(t, testCase.expectedOptions, result)
 		})
+	}
+}
+
+// Defines the struct for our test cases.
+type mergeConfigTestCase struct {
+	name            string
+	projectRoot     string
+	flags           flags
+	expectedOptions pdfrender.Options
+	baseConfig      config
+}
+
+// Solves funlen: This function is now very short, composing the test suite
+// from dedicated helper functions for each case.
+func getMergeConfigAndFlagsTestCases() []mergeConfigTestCase {
+	return []mergeConfigTestCase{
+		getFlagsOverrideCase(),
+		getConfigDefaultsCase(),
+	}
+}
+
+// Solves funlen: The setup for the "flags override" test case is now in its own function.
+func getFlagsOverrideCase() mergeConfigTestCase {
+	return mergeConfigTestCase{
+		name: "Flags should override all corresponding config values",
+		baseConfig: config{
+			Paths: configPaths{
+				InputDir:  "/config/in",
+				OutputDir: "/config/out",
+			},
+			LogsDir:  configLogsDir{PDFToPNG: "/logs/pdf_to_png"},
+			Settings: configSettings{DPI: 200, Workers: 4},
+			BlankDetection: configBlankDetection{
+				FuzzPercent:       5,
+				NonWhiteThreshold: 0.05,
+			},
+		},
+		flags: flags{
+			inputPath:  "/flag/in",
+			outputPath: "/flag/out",
+			dpi:        300,
+			workers:    8,
+		},
+		projectRoot: "/root",
+		expectedOptions: pdfrender.Options{
+			ProgressBarOutput:      io.Writer(nil),
+			ProjectRoot:            "/root",
+			InputPath:              "/flag/in",
+			OutputPath:             "/flag/out",
+			DPI:                    300,
+			Workers:                8,
+			BlankFuzzPercent:       5,
+			BlankNonWhiteThreshold: 0.05,
+		},
+	}
+}
+
+// Solves funlen: The setup for the "config defaults" test case is now in its own
+// function.
+func getConfigDefaultsCase() mergeConfigTestCase {
+	return mergeConfigTestCase{
+		name: "Config values should be used when flags are not provided",
+		baseConfig: config{
+			Paths: configPaths{
+				InputDir:  "/config/in",
+				OutputDir: "/config/out",
+			},
+			LogsDir:  configLogsDir{PDFToPNG: ""},
+			Settings: configSettings{DPI: 150, Workers: 2},
+			BlankDetection: configBlankDetection{
+				FuzzPercent:       0,
+				NonWhiteThreshold: 0,
+			},
+		},
+		flags: flags{
+			inputPath:  "",
+			outputPath: "",
+			dpi:        0,
+			workers:    0,
+		},
+		projectRoot: "/root",
+		expectedOptions: pdfrender.Options{
+			ProgressBarOutput:      io.Writer(nil),
+			ProjectRoot:            "/root",
+			InputPath:              "/config/in",
+			OutputPath:             "/config/out",
+			DPI:                    150,
+			Workers:                2,
+			BlankFuzzPercent:       0,
+			BlankNonWhiteThreshold: 0,
+		},
 	}
 }
