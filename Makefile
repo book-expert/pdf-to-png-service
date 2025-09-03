@@ -43,6 +43,9 @@ test:
 lint:
 	@echo "Running golangci-lint..."
 	golangci-lint run --fix
+	go vet ./...
+	go test -race ./...
+	staticcheck ./...
 
 # Format Go code
 fmt:
