@@ -42,6 +42,7 @@ test:
 # Run linter
 lint:
 	@echo "Running golangci-lint..."
+	gofumpt -l -w .
 	golangci-lint run --fix
 	go vet ./...
 	go test -race ./...
