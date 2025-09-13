@@ -1,229 +1,247 @@
-// Command pdf-to-png-service is the CLI entry point that reads configuration
-// from project.toml and command-line flags, sets up logging, and invokes the
-// pdfrender package to convert PDF files in an input directory to PNG images.
-//
-// Responsibilities:
-// - Discover project root and load config (if present).
-// - Parse flags that override config values.
-// - Initialize a rotating logger under logs/pdf_to_png by default.
-// - Construct pdfrender.Options and run the processing pipeline.
-//
-// Exit status: non-zero on any fatal error; logs provide detailed context.
+// ./cmd/pdf-to-png-service/main.go
+// A NATS-driven worker that converts PDFs to PNGs, stores them in an
+// object store, and publishes jobs for the next stage of processing.
 package main
 
 import (
 	"context"
 	"errors"
-	"flag"
 	"fmt"
+	"log"
 	"os"
+	"os/signal"
 	"path/filepath"
+	"strings"
+	"syscall"
 	"time"
 
-	"github.com/BurntSushi/toml"
-	"github.com/nnikolov3/configurator"
-	"github.com/nnikolov3/logger"
-
-	"pdf-to-png-service/pdfrender"
+	"github.com/nats-io/nats.go"
+	"github.com/nats-io/nats.go/jetstream"
+	"github.com/nnikolov3/pdf-to-png-service/internal/converter"
+	// You will need a library to handle the PDF conversion.
+	// This is just an example; replace with your actual implementation.
 )
 
-// Define named types for each section of the configuration.
-type configPaths struct {
-	InputDir  string `toml:"input_dir"`
-	OutputDir string `toml:"output_dir"`
+// --- Constants for NATS Configuration ---
+const (
+	// Subject to listen on for new PDF jobs.
+	pdfCreatedSubject = "pdf.created"
+	// Consumer name for the PDF processing group.
+	pdfConsumerName = "pdf-workers"
+	// Stream that holds the PDF jobs.
+	pdfStreamName = "PDF_JOBS"
+
+	// Subject to publish to when a PNG is ready.
+	pngCreatedSubject = "png.created"
+	// The name of the JetStream Object Store for PNG files.
+	pngObjectStoreName = "PNG_FILES"
+
+	// General NATS configuration
+	natsMaxAckPending = 10
+	natsFetchTimeout  = 5 * time.Second
+)
+
+// PDFCreatedJob represents the incoming job message.
+// For now, it contains a file path. In a cloud environment, this would
+// be an S3 URI or another object key.
+type PDFCreatedJob struct {
+	PDFPath string `json:"pdfPath"`
+	JobID   string `json:"jobId"`
 }
 
-type configLogsDir struct {
-	PDFToPNG string `toml:"pdf_to_png"`
-}
-
-type configSettings struct {
-	DPI     int `toml:"dpi"`
-	Workers int `toml:"workers"`
-}
-
-type configBlankDetection struct {
-	FuzzPercent       int     `toml:"fast_fuzz_percent"`
-	NonWhiteThreshold float64 `toml:"fast_non_white_threshold"`
-}
-
-// config represents the structure of the project.toml file, now using named types.
-type config struct {
-	Paths          configPaths          `toml:"paths"`
-	LogsDir        configLogsDir        `toml:"logs_dir"`
-	Settings       configSettings       `toml:"settings"`
-	BlankDetection configBlankDetection `toml:"blank_detection"`
-}
+// --- Main Application ---
 
 func main() {
-	ctx := context.Background()
-	// The `run` function contains the core application logic.
-	// We call it and then os.Exit to ensure deferred functions are run correctly.
-	err := run(ctx)
-	if err != nil {
-		fmt.Fprintf(os.Stderr, "Error: %v\n", err)
-		os.Exit(1)
+	// Setup graceful shutdown
+	ctx, stop := signal.NotifyContext(context.Background(), syscall.SIGINT, syscall.SIGTERM)
+	defer stop()
+
+	if err := run(ctx); err != nil {
+		log.Fatalf("Fatal application error: %v", err)
 	}
+	log.Println("Application shut down gracefully.")
 }
 
-// run is the main logic function, separated from main to allow for easier testing and
-// clean exit handling.
 func run(ctx context.Context) error {
-	projectRoot, configPath, err := configurator.FindProjectRoot(".")
+	// --- Connect to NATS ---
+	nc, err := nats.Connect(nats.DefaultURL)
 	if err != nil {
-		return fmt.Errorf("could not find project root: %w", err)
+		return fmt.Errorf("failed to connect to NATS: %w", err)
+	}
+	defer nc.Close()
+	log.Printf("Connected to NATS server at %s", nc.ConnectedUrl())
+
+	// --- Get JetStream Context ---
+	js, err := jetstream.New(nc)
+	if err != nil {
+		return fmt.Errorf("failed to create JetStream context: %w", err)
 	}
 
-	cfg, err := safeLoadConfig(configPath)
-	if err != nil {
-		return err
+	// --- Ensure NATS Resources Exist ---
+	if err := setupJetStream(js); err != nil {
+		return fmt.Errorf("failed to set up JetStream resources: %w", err)
 	}
 
-	flgs := parseFlags()
-	options := mergeConfigAndFlags(&cfg, flgs, projectRoot)
-
-	return processWithLogger(ctx, &options, cfg.LogsDir.PDFToPNG)
-}
-
-// safeLoadConfig loads the TOML config, allowing missing file without error.
-func safeLoadConfig(path string) (config, error) {
-	cfg, err := loadConfig(path)
-	if err != nil {
-		if errors.Is(err, os.ErrNotExist) {
-			var emptyCfg config
-
-			return emptyCfg, nil
-		}
-
-		return config{}, fmt.Errorf("error loading config file: %w", err)
-	}
-
-	return cfg, nil
-}
-
-// loadConfig reads and parses the project.toml file.
-func loadConfig(path string) (config, error) {
-	var cfg config
-
-	_, err := toml.DecodeFile(path, &cfg)
-	if err != nil {
-		var zero config
-
-		return zero, fmt.Errorf("failed to decode config file: %w", err)
-	}
-
-	return cfg, nil
-}
-
-// flags represents the command-line arguments.
-type flags struct {
-	inputPath  string
-	outputPath string
-	dpi        int
-	workers    int
-}
-
-// parseFlags defines and parses command-line flags.
-func parseFlags() flags {
-	var flagsVar flags
-	flag.StringVar(
-		&flagsVar.inputPath,
-		"input",
+	// --- Create a Pull Subscription to the PDF jobs consumer ---
+	sub, err := js.PullSubscribe(
+		ctx,
 		"",
-		"Input directory for PDF files (required).",
+		pdfConsumerName,
+		jetstream.Bind(pdfStreamName, pdfConsumerName),
 	)
-	flag.StringVar(
-		&flagsVar.outputPath,
-		"output",
-		"",
-		"Output directory for PNG files (required).",
-	)
-	flag.IntVar(&flagsVar.dpi, "dpi", 0, "Resolution in DPI for the output images.")
-	flag.IntVar(&flagsVar.workers, "workers", 0, "Number of concurrent workers.")
-	flag.Parse()
-
-	return flagsVar
-}
-
-// mergeConfigAndFlags combines settings from the config file and command-line flags.
-// Flags take precedence over the config file settings.
-func mergeConfigAndFlags(cfg *config, flgs flags, projectRoot string) pdfrender.Options {
-	opts := pdfrender.Options{
-		ProgressBarOutput:      nil,
-		ProjectRoot:            projectRoot,
-		InputPath:              cfg.Paths.InputDir,
-		OutputPath:             cfg.Paths.OutputDir,
-		DPI:                    cfg.Settings.DPI,
-		Workers:                cfg.Settings.Workers,
-		BlankFuzzPercent:       cfg.BlankDetection.FuzzPercent,
-		BlankNonWhiteThreshold: cfg.BlankDetection.NonWhiteThreshold,
-	}
-
-	// Command-line flags override config file values.
-	if flgs.inputPath != "" {
-		opts.InputPath = flgs.inputPath
-	}
-
-	if flgs.outputPath != "" {
-		opts.OutputPath = flgs.outputPath
-	}
-
-	if flgs.dpi > 0 {
-		opts.DPI = flgs.dpi
-	}
-
-	if flgs.workers > 0 {
-		opts.Workers = flgs.workers
-	}
-
-	return opts
-}
-
-// processWithLogger sets up the logger and runs the processor.
-func processWithLogger(
-	ctx context.Context,
-	options *pdfrender.Options,
-	logDir string,
-) error {
-	log, err := setupLogger(options.ProjectRoot, logDir)
 	if err != nil {
-		return fmt.Errorf("could not set up logger: %w", err)
+		return fmt.Errorf("failed to create pull subscription: %w", err)
 	}
 
-	defer func() {
-		cerr := log.Close()
-		if cerr != nil {
-			_, _ = fmt.Fprintf(
-				os.Stderr,
-				"failed to close logger: %v\n",
-				cerr,
-			)
-		}
-	}()
+	log.Printf("Worker is running, listening for jobs on '%s'...", pdfCreatedSubject)
 
-	processor := pdfrender.NewProcessor(options, log)
+	// --- Start the message processing loop ---
+	return processMessages(ctx, sub, js)
+}
 
-	procErr := processor.Process(ctx)
-	if procErr != nil {
-		return fmt.Errorf("PDF processing failed: %w", procErr)
+// setupJetStream ensures the required stream, consumer, and object store exist.
+func setupJetStream(js jetstream.JetStream) error {
+	ctx := context.Background()
+
+	// 1. Create the PDF_JOBS stream
+	_, err := js.CreateStream(ctx, jetstream.StreamConfig{
+		Name:     pdfStreamName,
+		Subjects: []string{pdfCreatedSubject},
+		Storage:  jetstream.FileStorage,
+	})
+	if err != nil && !errors.Is(err, jetstream.ErrStreamNameAlreadyInUse) {
+		return fmt.Errorf("failed to create stream: %w", err)
 	}
+	log.Printf("Stream '%s' is ready.", pdfStreamName)
+
+	// 2. Create the consumer for the PDF jobs
+	_, err = js.CreateConsumer(ctx, pdfStreamName, jetstream.ConsumerConfig{
+		Durable:       pdfConsumerName,
+		FilterSubject: pdfCreatedSubject,
+		AckPolicy:     jetstream.AckExplicitPolicy,
+	})
+	if err != nil && !errors.Is(err, jetstream.ErrConsumerNameAlreadyInUse) {
+		return fmt.Errorf("failed to create consumer: %w", err)
+	}
+	log.Printf("Consumer '%s' is ready.", pdfConsumerName)
+
+	// 3. Create the Object Store for PNGs
+	_, err = js.CreateObjectStore(ctx, jetstream.ObjectStoreConfig{
+		Bucket:  pngObjectStoreName,
+		Storage: jetstream.FileStorage,
+	})
+	if err != nil && !errors.Is(err, jetstream.ErrBucketExists) {
+		return fmt.Errorf("failed to create object store: %w", err)
+	}
+	log.Printf("Object Store '%s' is ready.", pngObjectStoreName)
 
 	return nil
 }
 
-// setupLogger initializes the logger, creating the log directory if needed.
-func setupLogger(projectRoot, logDirConfig string) (*logger.Logger, error) {
-	logDir := logDirConfig
-	if logDir == "" {
-		logDir = filepath.Join(projectRoot, "logs", "pdf_to_png")
-	}
-
-	logFileName := fmt.Sprintf("log_%s.log", time.Now().Format("20060102_150405"))
-
-	log, err := logger.New(logDir, logFileName)
+// processMessages runs the main loop to fetch and handle messages.
+func processMessages(
+	ctx context.Context,
+	sub jetstream.Subscription,
+	js jetstream.JetStream,
+) error {
+	pngStore, err := js.ObjectStore(ctx, pngObjectStoreName)
 	if err != nil {
-		return nil, fmt.Errorf("failed to create logger: %w", err)
+		return fmt.Errorf("failed to bind to object store: %w", err)
 	}
 
-	return log, nil
+	for {
+		select {
+		case <-ctx.Done():
+			return nil // Shutdown signal received
+		default:
+			// Fetch a batch of messages.
+			msgs, err := sub.Fetch(1, jetstream.FetchMaxWait(natsFetchTimeout))
+			if err != nil {
+				if errors.Is(err, context.Canceled) || errors.Is(err, context.DeadlineExceeded) ||
+					errors.Is(err, nats.ErrTimeout) {
+					continue // Normal timeout, loop again.
+				}
+				log.Printf("Error fetching messages: %v", err)
+				continue
+			}
+
+			for _, msg := range msgs {
+				handleMessage(ctx, msg, js, pngStore)
+			}
+		}
+	}
+}
+
+// handleMessage processes a single PDF job.
+func handleMessage(
+	ctx context.Context,
+	msg jetstream.Msg,
+	js jetstream.JetStream,
+	pngStore jetstream.ObjectStore,
+) {
+	// For simplicity, we assume the message payload is the PDF file path.
+	// In a real system, you'd unmarshal a JSON struct here.
+	pdfPath := string(msg.Data())
+	jobID := filepath.Base(pdfPath) // Use the filename as a simple job ID.
+
+	log.Printf("Received job [%s]: processing PDF '%s'", jobID, pdfPath)
+
+	// Terminate the message so it won't be redelivered while we process.
+	// We'll re-Nack it if something goes wrong.
+	msg.InProgress()
+
+	// --- 1. Core Logic: Convert PDF to PNGs ---
+	// This function returns paths to temporary PNG files.
+	pngFilePaths, err := converter.ProcessPDF(pdfPath)
+	if err != nil {
+		log.Printf("Error processing job [%s]: %v", jobID, err)
+		msg.Nak() // Tell NATS to redeliver the message later.
+		return
+	}
+
+	log.Printf("Job [%s]: Successfully converted PDF to %d PNGs.", jobID, len(pngFilePaths))
+
+	// --- 2. Producer Logic: Upload PNGs and Publish Jobs ---
+	for i, pngPath := range pngFilePaths {
+		file, err := os.Open(pngPath)
+		if err != nil {
+			log.Printf("Job [%s]: Failed to open PNG '%s': %v", jobID, pngPath, err)
+			continue // Skip this file, but try others.
+		}
+		defer file.Close()
+		defer os.Remove(pngPath) // Clean up temp file.
+
+		// A. Upload to Object Store
+		objectName := fmt.Sprintf(
+			"%s_page_%d.png",
+			strings.TrimSuffix(jobID, filepath.Ext(jobID)),
+			i+1,
+		)
+		_, err = pngStore.Put(ctx, jetstream.ObjectMeta{Name: objectName}, file)
+		if err != nil {
+			log.Printf(
+				"Job [%s]: Failed to upload '%s' to object store: %v",
+				jobID,
+				objectName,
+				err,
+			)
+			continue
+		}
+		log.Printf("Job [%s]: Successfully uploaded '%s'", jobID, objectName)
+
+		// B. Publish the 'png.created' job message. The payload is the object name.
+		_, err = js.Publish(ctx, pngCreatedSubject, []byte(objectName))
+		if err != nil {
+			log.Printf("Job [%s]: Failed to publish job for '%s': %v", jobID, objectName, err)
+		} else {
+			log.Printf("Job [%s]: Published job for '%s'", jobID, objectName)
+		}
+	}
+
+	// --- 3. Acknowledge the original PDF job message ---
+	if err := msg.Ack(); err != nil {
+		log.Printf("Job [%s]: Failed to acknowledge message: %v", jobID, err)
+	} else {
+		log.Printf("Job [%s]: Processing complete. Message acknowledged.", jobID)
+	}
 }

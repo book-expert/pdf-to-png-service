@@ -4,7 +4,7 @@
 
 # Build configuration
 BINARY := pdf-to-png-service
-BUILD_DIR := build
+BUILD_DIR := bin
 INSTALL_DIR := $(HOME)/bin
 
 # Go build flags
@@ -18,7 +18,7 @@ all: build test lint
 build:
 	@echo "Building $(BINARY)..."
 	@mkdir -p $(BUILD_DIR)
-	go build $(BUILD_FLAGS) -o $(BUILD_DIR)/$(BINARY) ./cmd
+	go build -o $(BUILD_DIR)/$(BINARY) ./cmd
 
 # Install binary to ~/bin
 install: build
