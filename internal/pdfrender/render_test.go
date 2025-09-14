@@ -11,7 +11,7 @@ import (
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 
-	pdfrender "pdf-to-png-service/pdfrender"
+	"github.com/nnikolov3/pdf-to-png-service/internal/pdfrender"
 )
 
 func TestNewProcessor_Defaults(t *testing.T) {

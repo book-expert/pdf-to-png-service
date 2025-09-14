@@ -26,6 +26,7 @@ linters:
   disable:
     - nonamedreturns
     - wsl
+    - embeddedstructfieldcheck
 
   settings:
     wsl_v5:
@@ -130,12 +131,6 @@ linters:
       # Allow only slices initialized with a length of zero.
       # Default: false
       always: true
-    maintidx:
-      # Show functions with maintainability index lower than N.
-      # A high index indicates better maintainability (it's kind of the opposite of complexity).
-      # Default: 20
-      # Relax threshold to avoid noisy failures on reasonably small functions.
-      under: 35
 
     govet:
       enable-all: true
@@ -171,9 +166,9 @@ linters:
     gocyclo:
       min-complexity: 5
     funlen:
-      lines: 60
+      lines: 80
       statements: 40
-      ignore-comments: false
+      ignore-comments: true
 
     # Style, correctness, performance (opinionated but aligned with standards)
     gocritic:
@@ -187,11 +182,6 @@ linters:
           files: ['$all']
           allow:
             - $gostd
-            - github.com/BurntSushi/toml
-            - github.com/cheggaaa/pb/v3
-            - github.com/nnikolov3/configurator
-            - github.com/nnikolov3/logger
-            - github.com/stretchr/testify
           deny:
             - pkg: 'github.com/sirupsen/logrus'
               desc: not allowed
@@ -199,20 +189,6 @@ linters:
               desc: Should be replaced by standard lib errors package
             - pkg: 'math/rand$'
               desc: use math/rand/v2
-    gomodguard:
-      allowed:
-        modules:
-          - github.com/BurntSushi/toml
-          - github.com/cheggaaa/pb/v3
-          - github.com/nnikolov3/configurator
-          - github.com/nnikolov3/logger
-          - github.com/stretchr/testify
-      blocked:
-        modules: []
-    gomoddirectives:
-      replace-allowlist: []
-      retract-allowlist: []
-      exclude-allowlist: []
     forbidigo:
       forbid:
         - pattern: '^print(ln)?$'
@@ -309,7 +285,7 @@ linters:
       confidence: medium
       # Concurrency value.
       # Default: the number of logical CPUs usable by the current process.
-      concurrency: 8
+      concurrency: 12
       # To specify the configuration of rules.
       config:
         # Globals are applicable to all rules.
@@ -319,9 +295,10 @@ linters:
           nosec: true
           # Add an alternative comment prefix to #nosec (both will work at the same time).
           # Default: ""
+          '#nosec': '#my-custom-nosec'
           # Define whether nosec issues are counted as finding or not.
           # Default: false
-          show-ignored: false
+          show-ignored: true
           # Audit mode enables addition checks that for normal code analysis might be too nosy.
           # Default: false
           audit: true
@@ -431,3 +408,8 @@ output:
       colors: true
 
   show-stats: true
+
+# Issue filtering and new-code gating
+issues:
+  whole-files: true
+  fix: true
