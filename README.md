@@ -39,7 +39,7 @@ go run ./cmd --input /path/to/pdfs --output /path/to/output
 ```
 
 ## Configuration
-The service can read configuration from a TOML file discovered via `github.com/nnikolov3/configurator` starting from the current directory upwards. The resolved config path is passed to the loader (`loadConfig`). If the file is missing, defaults/flags are used.
+The service can read configuration from a TOML file discovered via `github.com/book-expert/configurator` starting from the current directory upwards. The resolved config path is passed to the loader (`loadConfig`). If the file is missing, defaults/flags are used.
 
 Configuration structure (TOML keys):
 

@@ -10,8 +10,8 @@ import (
 	"path/filepath"
 	"runtime"
 
+	"github.com/book-expert/logger"
 	"github.com/cheggaaa/pb/v3"
-	"github.com/nnikolov3/logger"
 )
 
 var (

@@ -12,7 +12,7 @@ import (
 	"strconv"
 	"strings"
 
-	"github.com/nnikolov3/logger"
+	"github.com/book-expert/logger"
 )
 
 const (

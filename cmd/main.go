@@ -15,14 +15,14 @@ import (
 	"syscall"
 	"time"
 
+	"github.com/book-expert/configurator"
+	"github.com/book-expert/events"
+	"github.com/book-expert/logger"
 	"github.com/google/uuid"
 	"github.com/nats-io/nats.go"
 	"github.com/nats-io/nats.go/jetstream"
-	"github.com/nnikolov3/configurator"
-	"github.com/nnikolov3/events"
-	"github.com/nnikolov3/logger"
 
-	"github.com/nnikolov3/pdf-to-png-service/internal/pdfrender"
+	"github.com/book-expert/pdf-to-png-service/internal/pdfrender"
 )
 
 // Config represents the overall configuration structure for the pdf-to-png-service.
@@ -229,7 +229,7 @@ func setupConfigAndLogger() (*Config, *logger.Logger, error) {
 		}
 	}()
 
-	loadErr := configurator.LoadFromURL(&cfg, tempLogger)
+	loadErr := configurator.Load(&cfg, tempLogger)
 	if loadErr != nil {
 		return nil, nil, fmt.Errorf(
 			"failed to load configuration from URL: %w",
@@ -864,6 +864,7 @@ func filterPNGFiles(files []os.DirEntry) []os.DirEntry {
 	for _, file := range files {
 		if !file.IsDir() &&
 			strings.HasSuffix(strings.ToLower(file.Name()), ".png") {
+
 			pngFiles = append(pngFiles, file)
 		}
 	}

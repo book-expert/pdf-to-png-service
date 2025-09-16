@@ -7,11 +7,11 @@ import (
 	"runtime"
 	"testing"
 
-	"github.com/nnikolov3/logger"
+	"github.com/book-expert/logger"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 
-	"github.com/nnikolov3/pdf-to-png-service/internal/pdfrender"
+	"github.com/book-expert/pdf-to-png-service/internal/pdfrender"
 )
 
 func TestNewProcessor_Defaults(t *testing.T) {

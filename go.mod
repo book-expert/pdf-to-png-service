@@ -1,14 +1,14 @@
-module github.com/nnikolov3/pdf-to-png-service
+module github.com/book-expert/pdf-to-png-service
 
-go 1.25.0
+go 1.25.1
 
 require (
+	github.com/book-expert/configurator v0.2.4
+	github.com/book-expert/events v0.2.3
+	github.com/book-expert/logger v0.1.3
 	github.com/cheggaaa/pb/v3 v3.1.7
 	github.com/google/uuid v1.6.0
 	github.com/nats-io/nats.go v1.45.0
-	github.com/nnikolov3/configurator v0.2.1
-	github.com/nnikolov3/events v0.1.3
-	github.com/nnikolov3/logger v0.1.1
 	github.com/stretchr/testify v1.11.1
 )
 
