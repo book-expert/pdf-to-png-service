@@ -1,150 +1,91 @@
-# PDF to PNG Service
+# PDF-to-PNG Service
 
-A small Go service/CLI that converts PDF files to PNG images. It discovers PDFs in an input directory, renders each page to PNG using Ghostscript, and optionally removes pages considered "blank" using a fast helper tool. Progress is displayed via a progress bar, and structured logs are written to a logs directory.
+## Project Summary
 
-This repository contains:
-- cmd/main.go: the main CLI entrypoint.
-- pdfrender: the library that performs discovery, rendering, and blank detection.
-- cmd/detect-blank: a tiny helper binary used to quickly determine if a PNG page is blank (based on pixel content).
+A NATS-based microservice that converts PDF files to PNG images.
 
-## Features
-- Discover all PDFs in a directory (non-recursive) and process each file.
-- Render each page as a PNG with configurable DPI.
-- Concurrent worker support for faster processing.
-- Optional blank-page detection and removal using a compiled helper binary.
-- Progress bar output to stdout.
-- File-based logging with time‑stamped log files.
+## Detailed Description
 
-## Requirements
-- Go (see go.mod for the exact version; Go 1.21+ recommended).
-- Ghostscript (binary `ghostscript`).
-- pdfinfo (from Poppler utilities, binary `pdfinfo`).
-- A POSIX‑like environment is recommended for best compatibility.
+This service listens for `PDFCreatedEvent` messages on a NATS stream. When a message is received, it downloads the PDF file from a NATS object store, converts each page to a PNG image, and uploads the images to another NATS object store. For each generated PNG, it publishes a `PNGCreatedEvent` to a NATS stream.
 
-Make sure `ghostscript` and `pdfinfo` are available in your PATH.
+This service is a key component in the document processing pipeline, enabling subsequent services to work with images instead of PDF files.
 
-## Installation
-You can build the main tool with:
+Core capabilities include:
 
+-   **NATS Integration**: Seamlessly integrates with NATS for messaging and object storage.
+-   **Concurrent Processing**: Utilizes concurrent workers to accelerate the conversion process.
+-   **High-Quality Rendering**: Renders each PDF page as a PNG image with configurable DPI using Ghostscript.
+-   **Intelligent Blank Page Detection**: Optionally detects and removes blank pages.
+-   **Robust Error Handling**: Implements `ack`, `nak`, and `term` logic for handling NATS messages.
+
+## Technology Stack
+
+-   **Programming Language:** Go 1.25
+-   **Messaging:** NATS
+-   **Libraries:**
+    -   `github.com/nats-io/nats.go`
+    -   `github.com/book-expert/configurator`
+    -   `github.com/book-expert/events`
+    -   `github.com/book-expert/logger`
+    -   `github.com/cheggaaa/pb/v3`
+    -   `github.com/google/uuid`
+    -   `github.com/stretchr/testify`
+
+## Getting Started
+
+### Prerequisites
+
+-   Go 1.25 or later.
+-   NATS server with JetStream enabled.
+-   Ghostscript (`gs`) installed and available in the system's `PATH`.
+
+### Installation
+
+To build the service, you can use the `make build` command:
+
+```bash
+make build
 ```
-go build -o bin/pdf-to-png ./cmd
-```
 
-On first run, the service will automatically build the helper binary `detect-blank` (from `./cmd/detect-blank`) into `./bin/detect-blank` if it does not already exist. Ensure you have a working Go toolchain for that step as well.
+This will create the `pdf-to-png-service` binary in the `bin` directory.
 
-Alternatively, you can run via `go run`:
+### Configuration
 
-```
-go run ./cmd --input /path/to/pdfs --output /path/to/output
-```
-
-## Configuration
-The service can read configuration from a TOML file discovered via `github.com/book-expert/configurator` starting from the current directory upwards. The resolved config path is passed to the loader (`loadConfig`). If the file is missing, defaults/flags are used.
-
-Configuration structure (TOML keys):
+The service requires a TOML configuration file to be accessible via a URL specified by the `PROJECT_TOML` environment variable. The configuration file should have the following structure:
 
 ```toml
+[nats]
+url = "nats://localhost:4222"
+pdf_stream_name = "pdfs"
+pdf_consumer_name = "pdf_processor"
+pdf_created_subject = "pdf.created"
+pdf_object_store_bucket = "pdf_files"
+png_stream_name = "pngs"
+png_created_subject = "png.created"
+png_object_store_bucket = "png_images"
+
 [paths]
-input_dir = "/path/to/input"
-output_dir = "/path/to/output"
-
-[logs_dir]
-pdf_to_png = "/path/to/logs/pdf_to_png"  # optional; default is <projectRoot>/logs/pdf_to_png
-
-[settings]
-dpi = 200         # default 200 if <= 0
-workers = 0       # default = runtime.NumCPU() if <= 0
-
-[blank_detection]
-fast_fuzz_percent = 5           # default 5 if <= 0
-fast_non_white_threshold = 0.005 # default 0.005 if <= 0
+base_logs_dir = "/var/log/pdf-to-png-service"
 ```
 
-Notes:
-- If a value is 0 or empty, sensible defaults are applied by the code.
-- Command‑line flags override configuration values.
+## Usage
 
-## Command‑line Usage
-Flags for the main command:
-- --input string   Input directory for PDF files (required)
-- --output string  Output directory for PNG files (required)
-- --dpi int        Resolution in DPI for output images (optional)
-- --workers int    Number of concurrent workers (optional)
+To run the service, execute the binary:
 
-Examples:
-
-Render using only flags:
-```
-go run ./cmd \
-  --input /data/pdfs \
-  --output /data/output \
-  --dpi 300 \
-  --workers 8
+```bash
+./bin/pdf-to-png-service
 ```
 
-Render using config (flags override):
-```
-# project.toml located at or above the working directory with desired values
+The service will connect to NATS and start listening for messages.
 
-go run ./cmd --dpi 150
-```
+## Testing
 
-### Output layout
-For each PDF named `somefile.pdf`, images are written as PNGs under:
-```
-<output_dir>/somefile/png/
-```
+To run the tests for this service, you can use the `make test` command:
 
-### Logs
-Logs are written to a directory named by:
-- The `logs_dir.pdf_to_png` configuration key, if set; otherwise
-- `<projectRoot>/logs/pdf_to_png`.
-
-Each run creates a timestamped log file, e.g. `log_20250101_123000.log`.
-
-## Blank Detection
-After each page is rendered, the tool executes the helper binary `detect-blank` with:
-```
-<path-to-png> <fuzzPercent> <nonWhiteThreshold>
-```
-- Exit code 0: the image is blank; the PNG file is removed.
-- Exit code 1: the image has content.
-- Other exit codes: treated as an error.
-
-The parameters correspond to:
-- fast_fuzz_percent: integer percent (0–100). Larger values treat near‑white pixels as white.
-- fast_non_white_threshold: ratio (0.0–1.0). Minimum fraction of non‑white pixels to consider the page non‑blank.
-
-## Development
-Run tests:
-```
+```bash
 make test
-# or
-go test ./...
 ```
-
-Run lint (golangci-lint must be installed):
-```
-make lint
-```
-
-Project structure:
-- cmd/main.go: CLI entrypoint that parses flags, loads config, sets up logging, and runs the processor.
-- pdfrender: library with processing logic, rendering via Ghostscript, discovery utilities, and building/running the blank detection helper when needed.
-- cmd/detect-blank: helper CLI that evaluates whether a PNG is blank.
-
-Key options and defaults (from code):
-- DPI: default 200
-- Workers: default runtime.NumCPU()
-- Blank fuzz percent: default 5
-- Blank non‑white threshold: default 0.005
-
-## Troubleshooting
-- Error: "could not find project root": Make sure you run the tool from within the project (or adjust accordingly) so `configurator.FindProjectRoot(".")` can resolve the root.
-- Error building `detect-blank`: Ensure the Go toolchain is installed and `go build` works; check permissions for the `bin/` directory.
-- "pdfinfo execution failed": Verify that `pdfinfo` is installed and visible in PATH.
-- "ghostscript execution failed": Verify that Ghostscript is installed and visible in PATH.
-- No PDFs found: Ensure the `--input` directory exists and contains `.pdf` files (non‑recursive search).
 
 ## License
-Add your preferred license here (e.g., MIT).
+
+Distributed under the MIT License. See the `LICENSE` file for more information.
