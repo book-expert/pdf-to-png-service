@@ -864,7 +864,6 @@ func filterPNGFiles(files []os.DirEntry) []os.DirEntry {
 	for _, file := range files {
 		if !file.IsDir() &&
 			strings.HasSuffix(strings.ToLower(file.Name()), ".png") {
-
 			pngFiles = append(pngFiles, file)
 		}
 	}
