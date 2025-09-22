@@ -260,11 +260,8 @@ func TestProcessOnePDF_PageCountZeroError(t *testing.T) {
 		combinedOut:   nil,
 	}
 	proc.SetExecutorForTest(fakeExecutor)
-	require.ErrorIs(
-		t,
-		proc.ProcessOnePDFForTest(context.Background(), pdfPath),
-		pdfrender.ErrPDFZeroOrNegativePages,
-	)
+	_, err = proc.ProcessOnePDFForTest(context.Background(), pdfPath)
+	require.ErrorIs(t, err, pdfrender.ErrPDFZeroOrNegativePages)
 }
 
 func TestProcess_ValidatesAndPrepares(t *testing.T) {

@@ -297,7 +297,7 @@ func createTestImage(width, height int, c color.Color) *image.RGBA {
 func createTestPNG(t *testing.T, filePath string, img image.Image) {
 	t.Helper()
 
-	file, err := os.Create(filePath)
+	file, err := os.Create(filePath) // #nosec G304 -- tests create files in temp dirs controlled by the test harness
 	require.NoError(t, err)
 	t.Cleanup(func() { assert.NoError(t, file.Close()) })
 

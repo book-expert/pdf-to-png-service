@@ -806,7 +806,7 @@ func (j *job) processPDF(ctx context.Context) (string, error) {
 	}
 
 	opts := &pdfrender.Options{
-		InputPath:              j.localPDFPath,
+		InputPath:              filepath.Dir(j.localPDFPath),
 		OutputPath:             j.outputDir,
 		ProjectRoot:            filepath.Dir(exeDir),
 		DPI:                    defaultDPI,
@@ -817,14 +817,12 @@ func (j *job) processPDF(ctx context.Context) (string, error) {
 	}
 	processor := pdfrender.NewProcessor(opts, j.appLogger)
 
-	processErr := processor.Process(ctx)
+	outputDir, processErr := processor.ProcessSinglePDF(ctx, j.localPDFPath)
 	if processErr != nil {
 		return "", fmt.Errorf("failed to process PDF: %w", processErr)
 	}
 
-	pdfBaseName := strings.TrimSuffix(j.event.PDFKey, filepath.Ext(j.event.PDFKey))
-
-	return filepath.Join(j.outputDir, pdfBaseName, "png"), nil
+	return outputDir, nil
 }
 
 // publishPNGs uploads PNGs to the object store and publishes events.
@@ -991,7 +989,7 @@ func uploadFileToObjectStore(
 	store jetstream.ObjectStore,
 	objectName, filePath string,
 ) error {
-	file, openErr := os.Open(filePath)
+	file, openErr := os.Open(filePath) // #nosec G304 -- filePath points to renderer-managed output in the job workspace
 	if openErr != nil {
 		return fmt.Errorf("failed to open file for upload: %w", openErr)
 	}

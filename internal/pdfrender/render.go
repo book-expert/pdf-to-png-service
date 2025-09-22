@@ -129,6 +129,21 @@ func (processor *Processor) Process(ctx context.Context) error {
 	return processor.processAllPDFs(ctx, pdfPaths)
 }
 
+// ProcessSinglePDF converts a single PDF file to PNGs using the processor's configuration.
+// It returns the directory where the PNG files were written.
+func (processor *Processor) ProcessSinglePDF(ctx context.Context, pdfPath string) (string, error) {
+	if processor.config.OutputPath == "" {
+		return "", ErrOutputPathRequired
+	}
+
+	err := processor.prepareTools(ctx)
+	if err != nil {
+		return "", err
+	}
+
+	return processor.processOnePDF(ctx, pdfPath)
+}
+
 // prepareTools ensures required helper binaries are available before processing.
 func (processor *Processor) prepareTools(ctx context.Context) error {
 	buildErr := ensureDetectBlankBinary(
@@ -187,7 +202,7 @@ func (processor *Processor) processAllPDFs(ctx context.Context, pdfPaths []strin
 		mainProgressBar.Increment()
 		processor.log.Info("Starting processing for: %s", filepath.Base(pdfPath))
 
-		processErr := processor.processOnePDF(ctx, pdfPath)
+		_, processErr := processor.processOnePDF(ctx, pdfPath)
 		if processErr != nil {
 			processor.log.Error(
 				"Failed to process %s: %v",
@@ -204,21 +219,21 @@ func (processor *Processor) processAllPDFs(ctx context.Context, pdfPaths []strin
 }
 
 // processOnePDF handles the conversion of a single PDF file.
-func (processor *Processor) processOnePDF(ctx context.Context, pdfPath string) error {
+func (processor *Processor) processOnePDF(ctx context.Context, pdfPath string) (string, error) {
 	// Determine the total number of pages in the PDF.
 	pageCount, pageCountErr := processor.getPDFPages(ctx, pdfPath)
 	if pageCountErr != nil {
-		return fmt.Errorf("could not get page count: %w", pageCountErr)
+		return "", fmt.Errorf("could not get page count: %w", pageCountErr)
 	}
 
 	if pageCount <= 0 {
-		return ErrPDFZeroOrNegativePages
+		return "", ErrPDFZeroOrNegativePages
 	}
 
 	// Create the specific output directory for this PDF's PNGs.
 	outputDir, setupErr := setupOutputDirectory(processor.config.OutputPath, pdfPath)
 	if setupErr != nil {
-		return fmt.Errorf("could not set up output directory: %w", setupErr)
+		return "", fmt.Errorf("could not set up output directory: %w", setupErr)
 	}
 
 	processor.log.Info("Rendering %d pages into %s", pageCount, outputDir)
@@ -226,5 +241,10 @@ func (processor *Processor) processOnePDF(ctx context.Context, pdfPath string) e
 	// Create and run a PageProcessor to handle the concurrent rendering.
 	pageProc := newPageProcessor(processor, outputDir)
 
-	return pageProc.processPages(ctx, pdfPath, pageCount)
+	processErr := pageProc.processPages(ctx, pdfPath, pageCount)
+	if processErr != nil {
+		return "", processErr
+	}
+
+	return outputDir, nil
 }

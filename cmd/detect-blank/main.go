@@ -166,7 +166,7 @@ func imageHasContent(args arguments) (bool, error) {
 
 // loadImage opens and decodes an image file.
 func loadImage(filePath string) (image.Image, error) {
-	file, err := os.Open(filePath)
+	file, err := os.Open(filePath) // #nosec G304 -- CLI intentionally opens the user-specified image path
 	if err != nil {
 		return nil, fmt.Errorf("could not open file %s: %w", filePath, err)
 	}

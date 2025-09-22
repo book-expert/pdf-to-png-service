@@ -44,6 +44,6 @@ func (processor *Processor) ProcessAllPDFsForTest(
 	return processor.processAllPDFs(ctx, paths)
 }
 
-func (processor *Processor) ProcessOnePDFForTest(ctx context.Context, path string) error {
+func (processor *Processor) ProcessOnePDFForTest(ctx context.Context, path string) (string, error) {
 	return processor.processOnePDF(ctx, path)
 }
