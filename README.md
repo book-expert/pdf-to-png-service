@@ -23,7 +23,62 @@ Core capabilities include:
 ## 1.5. Architecture
 Here's a high-level overview of the `pdf-to-png-service` architecture:
 
-![PDF to PNG Service Architecture Diagram](pdf-to-png-service-diagram.png)
+```mermaid
+flowchart TD
+      subgraph Service["cmd/main.go"]
+          start["run(ctx)"]
+          config["setupConfigAndLogger\n→ configurator.Load + logger.New"]
+          nats["setupNATSComponents\n→ connectToNATS"]
+          js["initializeJetStream"]
+          setup["setupJetStream\n→ create streams + object stores"]
+          loop["processMessages loop"]
+          fetch["handleMessageBatch\n→ consumer.Fetch"]
+          newjob["newJob\n→ unmarshal PDFCreatedEvent"]
+          download["job.downloadPDF\n→ pdfStore.GetFile"]
+          process["job.processPDF\n→ pdfrender.ProcessSinglePDF"]
+          publishpng["job.publishPNGs\n→ uploadFileToObjectStore + publishPNGCreatedEvent"]
+          ack["Ack / Nak / Term"]
+      end
+
+      subgraph Renderer["internal/pdfrender"]
+          ensure["ensureDetectBlankBinary"]
+          build["buildBlankDetector\n→ go build cmd/detect-blank"]
+          pages["getPDFPages\n→ pdfinfo"]
+          pageproc["pageProcessor.processPages\n→ worker pool"]
+          renderpage["renderPage\n→ ghostscript"]
+          detect["handleBlankDetection\n→ detect-blank"]
+      end
+
+      subgraph Stores["NATS JetStream"]
+          pdfstore["PDF Object Store"]
+          pngstore["PNG Object Store"]
+          streams["PDF Stream + Consumer"]
+          pngstream["PNG Stream"]
+      end
+
+      subgraph Tools["External CLI tools"]
+          pdfinfoCLI["pdfinfo"]
+          ghostscriptCLI["ghostscript"]
+          detectBlankBinary["detect-blank binary"]
+      end
+
+      start --> config --> nats --> js --> setup --> loop
+      loop --> fetch --> newjob --> download
+      download --> pdfstore
+      newjob --> process
+      process --> ensure --> build
+      process --> pages --> pdfinfoCLI
+      process --> pageproc --> renderpage --> ghostscriptCLI
+      renderpage --> detect --> detectBlankBinary
+      process --> publishpng
+      publishpng --> pngstore
+      publishpng --> pngstream
+      publishpng --> ack --> loop
+      setup --> streams
+      setup --> pdfstore
+      setup --> pngstore
+      setup --> pngstream
+```
 
 
 -   **Programming Language:** Go 1.25
