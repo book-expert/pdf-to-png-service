@@ -18,7 +18,13 @@ Core capabilities include:
 -   **Intelligent Blank Page Detection**: Optionally detects and removes blank pages.
 -   **Robust Error Handling**: Implements `ack`, `nak`, and `term` logic for handling NATS messages.
 
-## Technology Stack
+## 1.4. Technology Stack
+
+## 1.5. Architecture
+Here's a high-level overview of the `pdf-to-png-service` architecture:
+
+![PDF to PNG Service Architecture Diagram](pdf-to-png-service-diagram.png)
+
 
 -   **Programming Language:** Go 1.25
 -   **Messaging:** NATS
