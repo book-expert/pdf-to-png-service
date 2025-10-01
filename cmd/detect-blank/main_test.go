@@ -1,9 +1,3 @@
-// Tests for the detect-blank command.
-//
-// This suite verifies:
-// - Argument parsing and validation rules.
-// - Image content detection across edge cases (zero pixels, near-white, thresholds).
-// - Error propagation for unreadable or invalid images.
 package main
 
 import (
@@ -206,6 +200,7 @@ func getImageErrorCases(
 			},
 			asserter: func(t *testing.T, _ bool, _ error) {
 				t.Helper()
+
 				testArgs := arguments{
 					filePath:   "",
 					fuzzFactor: 0,
@@ -225,6 +220,17 @@ func getImageContentCases(
 	assertHasContent func(bool) func(*testing.T, bool, error),
 	images map[string]image.Image,
 ) []imageTestCase {
+	basicCases := getBasicImageContentCases(assertHasContent, images)
+	thresholdCases := getThresholdImageContentCases(assertHasContent)
+	fuzzFactorCases := getFuzzFactorImageContentCases(assertHasContent)
+
+	return append(append(basicCases, thresholdCases...), fuzzFactorCases...)
+}
+
+func getBasicImageContentCases(
+	assertHasContent func(bool) func(*testing.T, bool, error),
+	images map[string]image.Image,
+) []imageTestCase {
 	return []imageTestCase{
 		{
 			name:     "Completely white image is blank",
@@ -238,11 +244,19 @@ func getImageContentCases(
 			setup:    func(t *testing.T, fp string) { t.Helper(); createTestPNG(t, fp, images["black"]) },
 			asserter: assertHasContent(true),
 		},
+	}
+}
+
+func getThresholdImageContentCases(
+	assertHasContent func(bool) func(*testing.T, bool, error),
+) []imageTestCase {
+	return []imageTestCase{
 		{
 			name: "Content just above threshold",
 			args: arguments{filePath: "", fuzzFactor: 0, threshold: 0.1},
 			setup: func(t *testing.T, fp string) {
 				t.Helper()
+
 				img := createImageWithContentRatio(100, 100, 0.11)
 				createTestPNG(t, fp, img)
 			},
@@ -253,16 +267,25 @@ func getImageContentCases(
 			args: arguments{filePath: "", fuzzFactor: 0, threshold: 0.1},
 			setup: func(t *testing.T, fp string) {
 				t.Helper()
+
 				img := createImageWithContentRatio(100, 100, 0.09)
 				createTestPNG(t, fp, img)
 			},
 			asserter: assertHasContent(false),
 		},
+	}
+}
+
+func getFuzzFactorImageContentCases(
+	assertHasContent func(bool) func(*testing.T, bool, error),
+) []imageTestCase {
+	return []imageTestCase{
 		{
 			name: "Near-white pixels treated as white (due to fuzz factor)",
 			args: arguments{filePath: "", fuzzFactor: 0.1, threshold: 0.5},
 			setup: func(t *testing.T, fp string) {
 				t.Helper()
+
 				img := createImageWithNearWhitePixels(100, 100, 0.05)
 				createTestPNG(t, fp, img)
 			},
@@ -273,6 +296,7 @@ func getImageContentCases(
 			args: arguments{filePath: "", fuzzFactor: 0.05, threshold: 0.1},
 			setup: func(t *testing.T, fp string) {
 				t.Helper()
+
 				img := createImageWithNearWhitePixels(100, 100, 0.1)
 				createTestPNG(t, fp, img)
 			},

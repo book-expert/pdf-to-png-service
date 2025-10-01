@@ -1,4 +1,4 @@
-// Package pdfrender provides PDF-to-PNG conversion functionality.
+// Package pdfrender provides PDF-to-PNG conversion functionality, including command execution for external tools.
 package pdfrender
 
 import (
