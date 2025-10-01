@@ -17,8 +17,8 @@ all: build test lint
 # Build the service
 build:
 	@echo "Building $(BINARY)..."
-	@mkdir -p $(BUILD_DIR)
-	go build -o $(BUILD_DIR)/$(BINARY) ./cmd
+	@mkdir -p $(INSTALL_DIR)
+	go build -o $(INSTALL_DIR)/$(BINARY) ./cmd
 
 # Install binary to ~/bin
 install: build
