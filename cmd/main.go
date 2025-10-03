@@ -27,25 +27,13 @@ import (
 
 // Config represents the overall configuration structure for the pdf-to-png-service.
 type Config struct {
-	NATS  NATSConfig  `toml:"nats"`
-	Paths PathsConfig `toml:"paths"`
+	ServiceNATS configurator.ServiceNATSConfig `toml:"pdf-to-png-service"`
+	Paths       PathsConfig                    `toml:"paths"`
 }
 
 // PathsConfig holds common path configurations.
 type PathsConfig struct {
 	BaseLogsDir string `toml:"base_logs_dir"`
-}
-
-// NATSConfig holds NATS-specific configuration for the pdf-to-png-service.
-type NATSConfig struct {
-	URL                  string `toml:"url"`
-	PDFStreamName        string `toml:"pdf_stream_name"`
-	PDFConsumerName      string `toml:"pdf_consumer_name"`
-	PDFCreatedSubject    string `toml:"pdf_created_subject"`
-	PDFObjectStoreBucket string `toml:"pdf_object_store_bucket"`
-	PNGStreamName        string `toml:"png_stream_name"`
-	PNGCreatedSubject    string `toml:"png_created_subject"`
-	PNGObjectStoreBucket string `toml:"png_object_store_bucket"`
 }
 
 // job represents the context for processing a single message.
@@ -65,7 +53,6 @@ type job struct {
 
 const (
 	natsFetchTimeout      = 5 * time.Second
-	ackWait               = 30 * time.Second
 	defaultWorkerCount    = 4
 	defaultDPI            = 300
 	defaultFuzzPercent    = 5
@@ -107,8 +94,7 @@ func run(ctx context.Context) error {
 
 	natsConnection, jetStream, consumer, err := setupNATSComponents(
 		ctx,
-		cfg,
-		appLogger,
+		&cfg.ServiceNATS,
 	)
 	if err != nil {
 		return fmt.Errorf("failed to setup NATS components: %w", err)
@@ -117,7 +103,7 @@ func run(ctx context.Context) error {
 
 	appLogger.Info(
 		"Worker is running, listening for jobs on '%s'...",
-		cfg.NATS.PDFCreatedSubject,
+		cfg.ServiceNATS.Consumers[0].FilterSubject,
 	)
 
 	return processMessages(ctx, consumer, jetStream, cfg, appLogger)
@@ -131,83 +117,34 @@ func run(ctx context.Context) error {
 //nolint:ireturn // The jetstream functions return an interface, and the
 func setupNATSComponents(
 	ctx context.Context,
-	cfg *Config,
-	appLogger *logger.Logger,
+	cfg *configurator.ServiceNATSConfig,
 ) (*nats.Conn, jetstream.JetStream, jetstream.Consumer, error) {
-	natsConnection, connErr := connectToNATS(cfg.NATS.URL, appLogger)
-	if connErr != nil {
-		return nil, nil, nil, connErr
-	}
-
-	jetStream, jsErr := initializeJetStream(natsConnection)
-	if jsErr != nil {
-		natsConnection.Close()
-
-		return nil, nil, nil, jsErr
-	}
-
-	err := setupJetStream(ctx, jetStream, cfg)
+	natsConnection, jetStream, err := configurator.SetupNATSComponents(cfg.NATS)
 	if err != nil {
-		natsConnection.Close()
-
-		return nil, nil, nil, err
+		return nil, nil, nil, fmt.Errorf("failed to setup nats components: %w", err)
 	}
 
-	consumer, consumerErr := getJetStreamConsumer(ctx, jetStream, cfg)
-	if consumerErr != nil {
-		natsConnection.Close()
+	err = configurator.CreateOrUpdateStreams(ctx, jetStream, cfg.Streams)
+	if err != nil {
+		return nil, nil, nil, fmt.Errorf("failed to create or update streams: %w", err)
+	}
 
-		return nil, nil, nil, consumerErr
+	err = configurator.CreateOrUpdateConsumers(ctx, jetStream, cfg.Consumers)
+	if err != nil {
+		return nil, nil, nil, fmt.Errorf("failed to create or update consumers: %w", err)
+	}
+
+	err = configurator.CreateOrUpdateObjectStores(ctx, jetStream, cfg.ObjectStores)
+	if err != nil {
+		return nil, nil, nil, fmt.Errorf("failed to create or update object stores: %w", err)
+	}
+
+	consumer, err := jetStream.Consumer(ctx, cfg.Consumers[0].StreamName, cfg.Consumers[0].ConsumerName)
+	if err != nil {
+		return nil, nil, nil, fmt.Errorf("failed to get consumer: %w", err)
 	}
 
 	return natsConnection, jetStream, consumer, nil
-}
-
-func connectToNATS(url string, appLogger *logger.Logger) (*nats.Conn, error) {
-	natsConnection, err := nats.Connect(url)
-	if err != nil {
-		return nil, fmt.Errorf("failed to connect to NATS: %w", err)
-	}
-
-	appLogger.Info("Connected to NATS server at %s", natsConnection.ConnectedUrl())
-
-	return natsConnection, nil
-}
-
-// initializeJetStream creates a new JetStream context.
-//
-// type is not exported.
-//
-//nolint:ireturn // The jetstream.New function returns an interface, and the concrete
-func initializeJetStream(natsConnection *nats.Conn) (jetstream.JetStream, error) {
-	jetStream, err := jetstream.New(natsConnection)
-	if err != nil {
-		return nil, fmt.Errorf("failed to create JetStream context: %w", err)
-	}
-
-	return jetStream, nil
-}
-
-// getJetStreamConsumer creates a consumer for the PDF stream.
-//
-// concrete type is not exported.
-//
-//nolint:ireturn // The jetstream.Consumer function returns an interface, and the
-func getJetStreamConsumer(
-	ctx context.Context,
-	jetStream jetstream.JetStream,
-	cfg *Config,
-) (jetstream.Consumer, error) {
-	consumer, err := jetStream.Consumer(
-		ctx,
-		cfg.NATS.PDFStreamName,
-		cfg.NATS.PDFConsumerName,
-	)
-	if err != nil {
-		return nil, fmt.Errorf("failed to get consumer: %w", err)
-	}
-
-	return consumer, nil
 }
 
 // setupConfigAndLogger loads configuration and sets up the main application logger.
@@ -250,233 +187,6 @@ func setupConfigAndLogger() (*Config, *logger.Logger, error) {
 	return &cfg, appLogger, nil
 }
 
-// setupJetStream ensures all required NATS streams and object stores exist.
-func setupJetStream(
-	ctx context.Context,
-	jetStream jetstream.JetStream,
-	cfg *Config,
-) error {
-	err := setupPDFStreamAndConsumer(ctx, jetStream, cfg)
-	if err != nil {
-		return err
-	}
-
-	err = setupPNGStream(ctx, jetStream, cfg)
-	if err != nil {
-		return err
-	}
-
-	buckets := []string{cfg.NATS.PDFObjectStoreBucket, cfg.NATS.PNGObjectStoreBucket}
-
-	return setupObjectStores(ctx, jetStream, buckets)
-}
-
-func setupPDFStreamAndConsumer(
-	ctx context.Context,
-	jetStream jetstream.JetStream,
-	cfg *Config,
-) error {
-	pdfStreamCfg := newStreamConfig(
-		cfg.NATS.PDFStreamName,
-		cfg.NATS.PDFCreatedSubject,
-	)
-
-	err := createStream(ctx, jetStream, pdfStreamCfg)
-	if err != nil {
-		return err
-	}
-
-	consumerCfg := newConsumerConfig(cfg)
-
-	return createOrUpdateConsumer(
-		ctx,
-		jetStream,
-		cfg.NATS.PDFStreamName,
-		consumerCfg,
-	)
-}
-
-func setupPNGStream(
-	ctx context.Context,
-	jetStream jetstream.JetStream,
-	cfg *Config,
-) error {
-	pngStreamCfg := newStreamConfig(
-		cfg.NATS.PNGStreamName,
-		cfg.NATS.PNGCreatedSubject,
-	)
-
-	return createStream(ctx, jetStream, pngStreamCfg)
-}
-
-func setupObjectStores(
-	ctx context.Context,
-	jetStream jetstream.JetStream,
-	buckets []string,
-) error {
-	for _, bucket := range buckets {
-		objStoreCfg := newObjectStoreConfig(bucket)
-
-		err := createObjectStore(ctx, jetStream, objStoreCfg)
-		if err != nil {
-			return err
-		}
-	}
-
-	return nil
-}
-
-func createStream(
-	ctx context.Context,
-	js jetstream.JetStream,
-	cfg *jetstream.StreamConfig,
-) error {
-	_, err := js.CreateStream(ctx, *cfg)
-	if err != nil && !errors.Is(err, jetstream.ErrStreamNameAlreadyInUse) {
-		return fmt.Errorf("failed to create stream '%s': %w", cfg.Name, err)
-	}
-
-	return nil
-}
-
-func createOrUpdateConsumer(
-	ctx context.Context,
-	js jetstream.JetStream,
-	streamName string,
-	cfg *jetstream.ConsumerConfig,
-) error {
-	stream, err := js.Stream(ctx, streamName)
-	if err != nil {
-		return fmt.Errorf(
-			"failed to get stream handle for '%s': %w",
-			streamName,
-			err,
-		)
-	}
-
-	_, err = stream.CreateOrUpdateConsumer(ctx, *cfg)
-	if err != nil {
-		return fmt.Errorf(
-			"failed to create or update consumer '%s': %w",
-			cfg.Durable,
-			err,
-		)
-	}
-
-	return nil
-}
-
-func createObjectStore(
-	ctx context.Context,
-	js jetstream.JetStream,
-	cfg *jetstream.ObjectStoreConfig,
-) error {
-	_, err := js.CreateObjectStore(ctx, *cfg)
-	if err != nil && !errors.Is(err, jetstream.ErrBucketExists) {
-		return fmt.Errorf(
-			"failed to create object store '%s': %w",
-			cfg.Bucket,
-			err,
-		)
-	}
-
-	return nil
-}
-
-func newStreamConfig(name, subject string) *jetstream.StreamConfig {
-	return &jetstream.StreamConfig{
-		Name:                 name,
-		Description:          "",
-		Subjects:             []string{subject},
-		Retention:            jetstream.WorkQueuePolicy,
-		MaxConsumers:         -1,
-		MaxMsgs:              -1,
-		MaxBytes:             -1,
-		Discard:              jetstream.DiscardOld,
-		DiscardNewPerSubject: false,
-		MaxAge:               0,
-		MaxMsgsPerSubject:    -1,
-		MaxMsgSize:           -1,
-		Storage:              jetstream.FileStorage,
-		Replicas:             1,
-		NoAck:                false,
-		Duplicates:           0,
-		Placement:            nil,
-		Mirror:               nil,
-		Sources:              nil,
-		Sealed:               false,
-		DenyDelete:           false,
-		DenyPurge:            false,
-		AllowRollup:          false,
-		Compression:          jetstream.NoCompression,
-		FirstSeq:             0,
-		SubjectTransform:     nil,
-		RePublish:            nil,
-		AllowDirect:          false,
-		MirrorDirect:         false,
-		ConsumerLimits: jetstream.StreamConsumerLimits{
-			InactiveThreshold: 0,
-			MaxAckPending:     0,
-		},
-		Metadata:               nil,
-		Template:               "",
-		AllowMsgTTL:            false,
-		SubjectDeleteMarkerTTL: 0,
-	}
-}
-
-func newConsumerConfig(cfg *Config) *jetstream.ConsumerConfig {
-	return &jetstream.ConsumerConfig{
-		Durable:            cfg.NATS.PDFConsumerName,
-		Name:               "",
-		Description:        "",
-		FilterSubject:      cfg.NATS.PDFCreatedSubject,
-		AckPolicy:          jetstream.AckExplicitPolicy,
-		AckWait:            ackWait,
-		MaxDeliver:         -1,
-		DeliverPolicy:      jetstream.DeliverAllPolicy,
-		OptStartSeq:        0,
-		OptStartTime:       nil,
-		BackOff:            nil,
-		ReplayPolicy:       jetstream.ReplayInstantPolicy,
-		RateLimit:          0,
-		SampleFrequency:    "",
-		MaxWaiting:         0,
-		MaxAckPending:      -1,
-		HeadersOnly:        false,
-		MaxRequestBatch:    0,
-		MaxRequestExpires:  0,
-		MaxRequestMaxBytes: 0,
-		InactiveThreshold:  0,
-		Replicas:           0,
-		MemoryStorage:      false,
-		FilterSubjects:     nil,
-		Metadata:           nil,
-		PauseUntil:         nil,
-		PriorityPolicy:     0,
-		PinnedTTL:          0,
-		PriorityGroups:     nil,
-		DeliverSubject:     "",
-		DeliverGroup:       "",
-		FlowControl:        false,
-		IdleHeartbeat:      0,
-	}
-}
-
-func newObjectStoreConfig(bucket string) *jetstream.ObjectStoreConfig {
-	return &jetstream.ObjectStoreConfig{
-		Bucket:      bucket,
-		Description: "",
-		TTL:         0,
-		MaxBytes:    -1,
-		Storage:     jetstream.FileStorage,
-		Replicas:    1,
-		Placement:   nil,
-		Compression: false,
-		Metadata:    nil,
-	}
-}
-
 // processMessages implements the core worker loop.
 func processMessages(
 	ctx context.Context,
@@ -488,8 +198,8 @@ func processMessages(
 	pdfStore, pngStore, err := getObjectStores(
 		ctx,
 		jetStream,
-		cfg.NATS.PDFObjectStoreBucket,
-		cfg.NATS.PNGObjectStoreBucket,
+		cfg.ServiceNATS.ObjectStores[0].BucketName,
+		cfg.ServiceNATS.ObjectStores[1].BucketName,
 	)
 	if err != nil {
 		return err
@@ -925,6 +635,17 @@ func (j *job) publishPNGCreatedEvent(
 		PNGKey:     pngKey,
 		PageNumber: pageNum,
 		TotalPages: totalPages,
+		Augmentation: &events.AugmentationPreferences{
+			Commentary: events.AugmentationCommentarySettings{
+				Enabled:            false,
+				CustomInstructions: "",
+			},
+			Summary: events.AugmentationSummarySettings{
+				Enabled:            false,
+				Placement:          "",
+				CustomInstructions: "",
+			},
+		},
 	}
 
 	eventJSON, marshalErr := json.Marshal(pngEvent)
@@ -932,7 +653,7 @@ func (j *job) publishPNGCreatedEvent(
 		return fmt.Errorf("failed to marshal PNGCreatedEvent: %w", marshalErr)
 	}
 
-	_, pubErr := j.jetStream.Publish(ctx, j.cfg.NATS.PNGCreatedSubject, eventJSON)
+	_, pubErr := j.jetStream.Publish(ctx, j.cfg.ServiceNATS.Streams[1].Subjects[0], eventJSON)
 	if pubErr != nil {
 		return fmt.Errorf("failed to publish PNGCreatedEvent: %w", pubErr)
 	}

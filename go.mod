@@ -3,7 +3,7 @@ module github.com/book-expert/pdf-to-png-service
 go 1.25.1
 
 require (
-	github.com/book-expert/configurator v0.2.5
+	github.com/book-expert/configurator v0.2.7
 	github.com/book-expert/events v0.3.1
 	github.com/book-expert/logger v0.1.3
 	github.com/cheggaaa/pb/v3 v3.1.7
