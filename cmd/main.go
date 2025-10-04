@@ -7,7 +7,6 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
-	"log"
 	"os"
 	"os/signal"
 	"path/filepath"
@@ -70,12 +69,25 @@ func main() {
 
 	err := run(ctx)
 	if err != nil {
-		log.Printf("Fatal application error: %v", err)
+		// Use a short-lived bootstrap logger to record fatal errors.
+		bootstrapLogger, bErr := logger.New(os.TempDir(), "pdf-to-png-bootstrap.log")
+		if bErr == nil {
+			bootstrapLogger.Error("Fatal application error: %v", err)
+			_ = bootstrapLogger.Close()
+		} else {
+			// Fallback to stderr if logger cannot be created.
+			fmt.Fprintf(os.Stderr, "Fatal application error: %v\n", err)
+		}
 
 		return
 	}
 
-	log.Println("Application shut down gracefully.")
+	// Log graceful shutdown using a bootstrap logger.
+	shutdownLogger, sErr := logger.New(os.TempDir(), "pdf-to-png-bootstrap.log")
+	if sErr == nil {
+		shutdownLogger.Info("Application shut down gracefully.")
+		_ = shutdownLogger.Close()
+	}
 }
 
 // run initializes all components and starts the message processing loop.
@@ -88,7 +100,7 @@ func run(ctx context.Context) error {
 	defer func() {
 		err := appLogger.Close()
 		if err != nil {
-			log.Printf("failed to close app logger: %v", err)
+			appLogger.Warn("failed to close app logger: %v", err)
 		}
 	}()
 
@@ -162,7 +174,8 @@ func setupConfigAndLogger() (*Config, *logger.Logger, error) {
 	defer func() {
 		closeErr := tempLogger.Close()
 		if closeErr != nil {
-			log.Printf("Warning: failed to close temp logger: %v", closeErr)
+			// We are in bootstrap; best-effort warn via stderr if logger fails.
+			fmt.Fprintf(os.Stderr, "Warning: failed to close temp logger: %v\n", closeErr)
 		}
 	}()
 
@@ -174,7 +187,7 @@ func setupConfigAndLogger() (*Config, *logger.Logger, error) {
 		)
 	}
 
-	log.Printf("Configuration loaded")
+	tempLogger.Info("Configuration loaded")
 
 	appLogger, loggerErr := logger.New(
 		cfg.Paths.BaseLogsDir,
@@ -593,7 +606,7 @@ func (j *job) publishSinglePNG(
 		index+1,
 	)
 
-	uploadErr := uploadFileToObjectStore(ctx, j.pngStore, objectName, localPNGPath)
+	uploadErr := uploadFileToObjectStore(ctx, j.pngStore, objectName, localPNGPath, j.appLogger)
 	if uploadErr != nil {
 		return fmt.Errorf("failed to upload '%s': %w", objectName, uploadErr)
 	}
@@ -709,6 +722,7 @@ func uploadFileToObjectStore(
 	ctx context.Context,
 	store jetstream.ObjectStore,
 	objectName, filePath string,
+	log *logger.Logger,
 ) error {
 	file, openErr := os.Open(filePath) // #nosec G304 -- filePath points to renderer-managed output in the job workspace
 	if openErr != nil {
@@ -718,11 +732,11 @@ func uploadFileToObjectStore(
 	defer func() {
 		closeErr := file.Close()
 		if closeErr != nil {
-			log.Printf(
-				"Warning: failed to close file '%s': %v",
-				filePath,
-				closeErr,
-			)
+			if log != nil {
+				log.Warn("Failed to close file '%s': %v", filePath, closeErr)
+			} else {
+				fmt.Fprintf(os.Stderr, "Failed to close file '%s': %v\n", filePath, closeErr)
+			}
 		}
 	}()
 
