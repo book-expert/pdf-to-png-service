@@ -145,6 +145,17 @@ func (processor *Processor) ProcessSinglePDF(ctx context.Context, pdfPath string
 	return processor.processOnePDF(ctx, pdfPath)
 }
 
+// ProcessSinglePDFFromBytes converts a single PDF file from a byte slice to PNGs using the processor's configuration.
+// It returns the PNGs as a slice of byte slices.
+func (processor *Processor) ProcessSinglePDFFromBytes(ctx context.Context, pdfData []byte) ([][]byte, error) {
+	err := processor.prepareTools(ctx)
+	if err != nil {
+		return nil, err
+	}
+
+	return processor.processOnePDFFromBytes(ctx, pdfData)
+}
+
 // prepareTools ensures required helper binaries are available before processing.
 func (processor *Processor) prepareTools(ctx context.Context) error {
 	buildErr := ensureDetectBlankBinary(
@@ -248,4 +259,29 @@ func (processor *Processor) processOnePDF(ctx context.Context, pdfPath string) (
 	}
 
 	return outputDir, nil
+}
+
+// processOnePDFFromBytes handles the conversion of a single PDF file from a byte slice.
+func (processor *Processor) processOnePDFFromBytes(ctx context.Context, pdfData []byte) ([][]byte, error) {
+	// Determine the total number of pages in the PDF.
+	pageCount, pageCountErr := processor.getPDFPagesFromBytes(ctx, pdfData)
+	if pageCountErr != nil {
+		return nil, fmt.Errorf("could not get page count: %w", pageCountErr)
+	}
+
+	if pageCount <= 0 {
+		return nil, ErrPDFZeroOrNegativePages
+	}
+
+	processor.log.Info("Rendering %d pages", pageCount)
+
+	// Create and run a PageProcessor to handle the concurrent rendering.
+	pageProc := newPageProcessor(processor, "")
+
+	pngs, processErr := pageProc.processPagesFromBytes(ctx, pdfData, pageCount)
+	if processErr != nil {
+		return nil, processErr
+	}
+
+	return pngs, nil
 }

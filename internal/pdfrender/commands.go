@@ -2,9 +2,11 @@ package pdfrender
 
 import (
 	"bufio"
+	"bytes"
 	"context"
 	"errors"
 	"fmt"
+	"io"
 	"os"
 	"os/exec"
 	"path/filepath"
@@ -46,6 +48,7 @@ type CommandExecutor interface {
 	// RunCombined executes a command and returns its combined standard output and
 	// standard error.
 	RunCombined(ctx context.Context, name string, args ...string) ([]byte, error)
+	RunWithStdin(ctx context.Context, stdin io.Reader, name string, args ...string) ([]byte, error)
 }
 
 // defaultExecutor implements the CommandExecutor interface using the standard os/exec
@@ -82,6 +85,24 @@ func (executor *defaultExecutor) RunCombined(
 	return output, nil
 }
 
+// RunWithStdin is the production implementation for executing a command with stdin.
+func (executor *defaultExecutor) RunWithStdin(
+	ctx context.Context,
+	stdin io.Reader,
+	name string,
+	args ...string,
+) ([]byte, error) {
+	cmd := exec.CommandContext(ctx, name, args...)
+	cmd.Stdin = stdin
+
+	output, err := cmd.CombinedOutput()
+	if err != nil {
+		return nil, fmt.Errorf("command execution failed: %w", err)
+	}
+
+	return output, nil
+}
+
 // getPDFPages executes the `pdfinfo` command to determine the number of pages in a PDF.
 func (processor *Processor) getPDFPages(
 	ctx context.Context,
@@ -93,6 +114,29 @@ func (processor *Processor) getPDFPages(
 
 	// The `pdfinfo` command prints metadata, including the page count, to stdout.
 	outputBytes, execErr := processor.executor.Run(ctx, "pdfinfo", pdfPath)
+	if execErr != nil {
+		// Include the command's output in the error for better debugging.
+		return 0, fmt.Errorf(
+			"pdfinfo execution failed: %w. Output: %s",
+			execErr,
+			string(outputBytes),
+		)
+	}
+
+	return parsePdfInfoOutput(string(outputBytes))
+}
+
+// getPDFPagesFromBytes executes the `pdfinfo` command to determine the number of pages in a PDF from a byte slice.
+func (processor *Processor) getPDFPagesFromBytes(
+	ctx context.Context,
+	pdfData []byte,
+) (int, error) {
+	if len(pdfData) == 0 {
+		return 0, ErrPDFPathEmpty
+	}
+
+	// The `pdfinfo` command prints metadata, including the page count, to stdout.
+	outputBytes, execErr := processor.executor.RunWithStdin(ctx, bytes.NewReader(pdfData), "pdfinfo", "-")
 	if execErr != nil {
 		// Include the command's output in the error for better debugging.
 		return 0, fmt.Errorf(
@@ -187,6 +231,34 @@ func (processor *Processor) renderPage(
 	return nil
 }
 
+// renderPageFromBytes executes the Ghostscript command to convert a single PDF page to a PNG image from a byte slice.
+func (processor *Processor) renderPageFromBytes(
+	ctx context.Context,
+	pdfData []byte,
+	page int,
+) ([]byte, error) {
+	if page <= 0 {
+		return nil, ErrPageNumberMustBePositive
+	}
+
+	args := buildGhostscriptArgsForStdin(processor.config.DPI, page)
+
+	output, err := processor.executor.RunWithStdin(
+		ctx,
+		bytes.NewReader(pdfData),
+		"ghostscript",
+		args...)
+	if err != nil {
+		return nil, fmt.Errorf(
+			"ghostscript execution failed: %w. Output: %s",
+			err,
+			string(output),
+		)
+	}
+
+	return output, nil
+}
+
 // buildGhostscriptArgs constructs the list of command-line arguments for the Ghostscript
 // process.
 func buildGhostscriptArgs(dpi, page int, outPath, pdfPath string) []string {
@@ -202,6 +274,24 @@ func buildGhostscriptArgs(dpi, page int, outPath, pdfPath string) []string {
 		"-dDownScaleFactor=1",   // Disable downscaling.
 		"-dPDFFitPage",          // Fit the PDF page to the output media.
 		pdfPath,                 // The input PDF file.
+	}
+}
+
+// buildGhostscriptArgsForStdin constructs the list of command-line arguments
+// for the Ghostscript process when reading from stdin.
+func buildGhostscriptArgsForStdin(dpi, page int) []string {
+	return []string{
+		"-q", "-dNOPAUSE", "-dBATCH", // Quiet mode, non-interactive batch processing.
+		"-sDEVICE=png16m",                   // Set the output device to a 24-bit color PNG.
+		fmt.Sprintf("-r%d", dpi),            // Set the resolution in DPI.
+		fmt.Sprintf("-dFirstPage=%d", page), // Specify the page number to render.
+		fmt.Sprintf("-dLastPage=%d", page),  // Process only that single page.
+		"-o", "-",                           // Set the output to stdout.
+		"-dTextAlphaBits=4",     // Enable anti-aliasing for text.
+		"-dGraphicsAlphaBits=4", // Enable anti-aliasing for graphics.
+		"-dDownScaleFactor=1",   // Disable downscaling.
+		"-dPDFFitPage",          // Fit the PDF page to the output media.
+		"-",                     // The input PDF file from stdin.
 	}
 }
 

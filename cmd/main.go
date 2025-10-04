@@ -7,9 +7,9 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"io"
 	"os"
 	"os/signal"
-	"path/filepath"
 	"strings"
 	"syscall"
 	"time"
@@ -28,6 +28,7 @@ import (
 type Config struct {
 	ServiceNATS configurator.ServiceNATSConfig `toml:"pdf-to-png-service"`
 	Paths       PathsConfig                    `toml:"paths"`
+	PDFToPNG    PDFToPNGServiceConfig          `toml:"pdf_to_png_service"`
 }
 
 // PathsConfig holds common path configurations.
@@ -35,19 +36,24 @@ type PathsConfig struct {
 	BaseLogsDir string `toml:"base_logs_dir"`
 }
 
+// PDFToPNGServiceConfig holds service-specific settings.
+type PDFToPNGServiceConfig struct {
+	DeadLetterSubject string `toml:"dead_letter_subject"`
+}
+
 // job represents the context for processing a single message.
 type job struct {
-	nats         *nats.Conn
-	msg          jetstream.Msg
-	jetStream    jetstream.JetStream
-	pdfStore     jetstream.ObjectStore
-	pngStore     jetstream.ObjectStore
-	cfg          *Config
-	appLogger    *logger.Logger
-	event        *events.PDFCreatedEvent
-	header       *events.EventHeader
-	outputDir    string
-	localPDFPath string
+	nats      *nats.Conn
+	msg       jetstream.Msg
+	jetStream jetstream.JetStream
+	pdfStore  jetstream.ObjectStore
+	pngStore  jetstream.ObjectStore
+	cfg       *Config
+	appLogger *logger.Logger
+	event     *events.PDFCreatedEvent
+	header    *events.EventHeader
+	pdfData   []byte
+	pngData   [][]byte
 }
 
 const (
@@ -113,6 +119,12 @@ func run(ctx context.Context) error {
 	}
 	defer natsConnection.Close()
 
+	// Ensure DLQ stream for the configured subject exists.
+	dlqErr := ensureDLQStream(ctx, jetStream, &cfg.ServiceNATS, cfg.PDFToPNG.DeadLetterSubject)
+	if dlqErr != nil {
+		return dlqErr
+	}
+
 	appLogger.Info(
 		"Worker is running, listening for jobs on '%s'...",
 		cfg.ServiceNATS.Consumers[0].FilterSubject,
@@ -157,6 +169,40 @@ func setupNATSComponents(
 	}
 
 	return natsConnection, jetStream, consumer, nil
+}
+
+var errDeadLetterSubjectNotConfigured = errors.New("dead letter subject must be configured")
+
+// ensureDLQStream creates/updates a dedicated dlq stream for the subject if not present.
+func ensureDLQStream(
+	ctx context.Context,
+	jetStream jetstream.JetStream,
+	serviceNATS *configurator.ServiceNATSConfig,
+	deadLetterSubject string,
+) error {
+	if strings.TrimSpace(deadLetterSubject) == "" {
+		return errDeadLetterSubjectNotConfigured
+	}
+
+	for _, s := range serviceNATS.Streams {
+		for _, subj := range s.Subjects {
+			if subj == deadLetterSubject {
+				return nil
+			}
+		}
+	}
+
+	dlq := configurator.StreamConfig{
+		Name:     "dlq",
+		Subjects: []string{deadLetterSubject},
+	}
+
+	err := configurator.CreateOrUpdateStreams(ctx, jetStream, []configurator.StreamConfig{dlq})
+	if err != nil {
+		return fmt.Errorf("ensure dlq stream: %w", err)
+	}
+
+	return nil
 }
 
 // setupConfigAndLogger loads configuration and sets up the main application logger.
@@ -346,6 +392,8 @@ func handleMessage(
 	job, jobErr := newJob(msg, jetStream, pdfStore, pngStore, cfg, appLogger)
 	if jobErr != nil {
 		appLogger.Error("Failed to create job: %v", jobErr)
+		// Attempt DLQ publish of original payload.
+		handleFailure(ctx, jetStream, msg, cfg.PDFToPNG.DeadLetterSubject, appLogger)
 
 		return
 	}
@@ -367,17 +415,17 @@ func newJob(
 	}
 
 	return &job{
-		nats:         nil,
-		msg:          msg,
-		jetStream:    jetStream,
-		pdfStore:     pdfStore,
-		pngStore:     pngStore,
-		cfg:          cfg,
-		appLogger:    appLogger,
-		event:        event,
-		header:       &event.Header,
-		outputDir:    "", // Will be set by setupWorkDir
-		localPDFPath: "", // Will be set by setupWorkDir
+		nats:      nil,
+		msg:       msg,
+		jetStream: jetStream,
+		pdfStore:  pdfStore,
+		pngStore:  pngStore,
+		cfg:       cfg,
+		appLogger: appLogger,
+		event:     event,
+		header:    &event.Header,
+		pdfData:   nil,
+		pngData:   nil,
 	}, nil
 }
 
@@ -397,7 +445,7 @@ func unmarshalEvent(msg jetstream.Msg) (*events.PDFCreatedEvent, error) {
 // NATS message handler.
 type jobError struct {
 	err     error
-	handler func(error)
+	handler func(context.Context, error)
 }
 
 // Error implements the error interface for jobError.
@@ -412,12 +460,12 @@ func (j *job) executeProcessingSteps(ctx context.Context) error {
 		return &jobError{err: downloadErr, handler: j.term}
 	}
 
-	pngsFinalDir, processErr := j.processPDF(ctx)
+	processErr := j.processPDF(ctx)
 	if processErr != nil {
 		return &jobError{err: processErr, handler: j.nak}
 	}
 
-	publishErr := j.publishPNGs(ctx, pngsFinalDir)
+	publishErr := j.publishPNGs(ctx)
 	if publishErr != nil {
 		return &jobError{err: publishErr, handler: j.nak}
 	}
@@ -438,22 +486,9 @@ func (j *job) run(ctx context.Context) {
 		j.appLogger.Warn("Failed to send InProgress update: %v", progErr)
 	}
 
-	dirErr := j.setupWorkDir()
-	if dirErr != nil {
-		j.appLogger.Error(
-			"Error setting up work directory for job [%s]: %v",
-			j.header.WorkflowID,
-			dirErr,
-		)
-		j.nak(dirErr)
-
-		return
-	}
-	defer j.cleanupWorkDir()
-
 	processingErr := j.executeProcessingSteps(ctx)
 	if processingErr != nil {
-		j.handleProcessingError(processingErr)
+		j.handleProcessingError(ctx, processingErr)
 
 		return
 	}
@@ -463,7 +498,7 @@ func (j *job) run(ctx context.Context) {
 
 // handleProcessingError centralizes the logic for handling errors from the core
 // processing steps.
-func (j *job) handleProcessingError(processingErr error) {
+func (j *job) handleProcessingError(ctx context.Context, processingErr error) {
 	var jErr *jobError
 	if errors.As(processingErr, &jErr) {
 		j.appLogger.Error(
@@ -471,67 +506,46 @@ func (j *job) handleProcessingError(processingErr error) {
 			j.header.WorkflowID,
 			jErr.err,
 		)
-		jErr.handler(jErr.err)
+		jErr.handler(ctx, jErr.err)
 	} else {
 		j.appLogger.Error(
 			"Job [%s] failed with unexpected error: %v",
 			j.header.WorkflowID,
 			processingErr,
 		)
-		j.nak(processingErr)
-	}
-}
-
-func (j *job) setupWorkDir() error {
-	outputDir, err := os.MkdirTemp("", fmt.Sprintf("pdf-%s-", j.header.WorkflowID))
-	if err != nil {
-		return fmt.Errorf("failed to create temp dir: %w", err)
-	}
-
-	j.outputDir = outputDir
-	j.localPDFPath = filepath.Join(outputDir, j.event.PDFKey)
-
-	return nil
-}
-
-func (j *job) cleanupWorkDir() {
-	err := os.RemoveAll(j.outputDir)
-	if err != nil {
-		j.appLogger.Warn(
-			"Failed to remove temp directory '%s': %v",
-			j.outputDir,
-			err,
-		)
+		j.nak(ctx, processingErr)
 	}
 }
 
 func (j *job) downloadPDF(ctx context.Context) error {
-	err := j.pdfStore.GetFile(ctx, j.event.PDFKey, j.localPDFPath)
+	obj, err := j.pdfStore.Get(ctx, j.event.PDFKey)
 	if err != nil {
-		return fmt.Errorf(
-			"failed to get PDF '%s' from object store: %w",
-			j.event.PDFKey,
-			err,
-		)
+		return fmt.Errorf("failed to get PDF '%s' from object store: %w", j.event.PDFKey, err)
 	}
+
+	defer func() {
+		err := obj.Close()
+		if err != nil {
+			j.appLogger.Warn("failed to close object store object: %v", err)
+		}
+	}()
+
+	pdfData, err := io.ReadAll(obj)
+	if err != nil {
+		return fmt.Errorf("failed to read PDF data from object store: %w", err)
+	}
+
+	j.pdfData = pdfData
 
 	return nil
 }
 
 // processPDF handles the PDF to PNG conversion.
-func (j *job) processPDF(ctx context.Context) (string, error) {
-	exeDir, exeErr := getExecutableDir()
-	if exeErr != nil {
-		return "", fmt.Errorf(
-			"could not determine executable directory: %w",
-			exeErr,
-		)
-	}
-
+func (j *job) processPDF(ctx context.Context) error {
 	opts := &pdfrender.Options{
-		InputPath:              filepath.Dir(j.localPDFPath),
-		OutputPath:             j.outputDir,
-		ProjectRoot:            filepath.Dir(exeDir),
+		InputPath:              "",
+		OutputPath:             "",
+		ProjectRoot:            "",
 		DPI:                    defaultDPI,
 		Workers:                defaultWorkerCount,
 		BlankFuzzPercent:       defaultFuzzPercent,
@@ -540,27 +554,19 @@ func (j *job) processPDF(ctx context.Context) (string, error) {
 	}
 	processor := pdfrender.NewProcessor(opts, j.appLogger)
 
-	outputDir, processErr := processor.ProcessSinglePDF(ctx, j.localPDFPath)
+	pngs, processErr := processor.ProcessSinglePDFFromBytes(ctx, j.pdfData)
 	if processErr != nil {
-		return "", fmt.Errorf("failed to process PDF: %w", processErr)
+		return fmt.Errorf("failed to process PDF: %w", processErr)
 	}
 
-	return outputDir, nil
+	j.pngData = pngs
+
+	return nil
 }
 
 // publishPNGs uploads PNGs to the object store and publishes events.
-func (j *job) publishPNGs(ctx context.Context, pngsFinalDir string) error {
-	files, readDirErr := os.ReadDir(pngsFinalDir)
-	if readDirErr != nil {
-		return fmt.Errorf(
-			"could not read final output directory '%s': %w",
-			pngsFinalDir,
-			readDirErr,
-		)
-	}
-
-	pngFiles := filterPNGFiles(files)
-	pageCount := len(pngFiles)
+func (j *job) publishPNGs(ctx context.Context) error {
+	pageCount := len(j.pngData)
 
 	j.appLogger.Info(
 		"Job [%s]: Found %d PNG(s) to publish.",
@@ -568,8 +574,8 @@ func (j *job) publishPNGs(ctx context.Context, pngsFinalDir string) error {
 		pageCount,
 	)
 
-	for index, file := range pngFiles {
-		err := j.publishSinglePNG(ctx, pngsFinalDir, file, pageCount, index)
+	for index, pngData := range j.pngData {
+		err := j.publishSinglePNG(ctx, pngData, pageCount, index)
 		if err != nil {
 			return err
 		}
@@ -578,27 +584,11 @@ func (j *job) publishPNGs(ctx context.Context, pngsFinalDir string) error {
 	return nil
 }
 
-// filterPNGFiles filters a slice of directory entries, returning only PNG files.
-func filterPNGFiles(files []os.DirEntry) []os.DirEntry {
-	var pngFiles []os.DirEntry
-
-	for _, file := range files {
-		if !file.IsDir() &&
-			strings.HasSuffix(strings.ToLower(file.Name()), ".png") {
-			pngFiles = append(pngFiles, file)
-		}
-	}
-
-	return pngFiles
-}
-
 func (j *job) publishSinglePNG(
 	ctx context.Context,
-	pngsFinalDir string,
-	file os.DirEntry,
+	pngData []byte,
 	pageCount, index int,
 ) error {
-	localPNGPath := filepath.Join(pngsFinalDir, file.Name())
 	objectName := fmt.Sprintf(
 		"%s/%s/page_%04d.png",
 		j.header.TenantID,
@@ -606,7 +596,7 @@ func (j *job) publishSinglePNG(
 		index+1,
 	)
 
-	uploadErr := uploadFileToObjectStore(ctx, j.pngStore, objectName, localPNGPath, j.appLogger)
+	uploadErr := uploadBytesToObjectStore(ctx, j.pngStore, objectName, pngData)
 	if uploadErr != nil {
 		return fmt.Errorf("failed to upload '%s': %w", objectName, uploadErr)
 	}
@@ -687,68 +677,77 @@ func (j *job) ack() {
 	}
 }
 
-func (j *job) nak(reason error) {
-	j.appLogger.Error("NAK'ing message for job [%s]: %v", j.header.WorkflowID, reason)
-
-	err := j.msg.Nak()
-	if err != nil {
-		j.appLogger.Error("Failed to NAK message: %v", err)
-	}
+func (j *job) nak(ctx context.Context, reason error) {
+	j.appLogger.Error("NAK'ing (via DLQ policy) job [%s]: %v", j.header.WorkflowID, reason)
+	handleFailure(ctx, j.jetStream, j.msg, j.cfg.PDFToPNG.DeadLetterSubject, j.appLogger)
 }
 
-func (j *job) term(reason error) {
+func (j *job) term(ctx context.Context, reason error) {
 	j.appLogger.Error(
-		"Terminating message for job [%s]: %v",
+		"Terminating (via DLQ policy) job [%s]: %v",
 		j.header.WorkflowID,
 		reason,
 	)
+	handleFailure(ctx, j.jetStream, j.msg, j.cfg.PDFToPNG.DeadLetterSubject, j.appLogger)
+}
 
-	err := j.msg.Term()
+const (
+	dlqPublishMaxRetries      = 3
+	dlqPublishBackoffDuration = 100 * time.Millisecond
+)
+
+// handleFailure publishes the failed payload to the DLQ subject and Ack/NakWithDelay accordingly.
+func handleFailure(
+	ctx context.Context,
+	jetStream jetstream.JetStream,
+	msg jetstream.Msg,
+	deadLetterSubject string,
+	log *logger.Logger,
+) {
+	if strings.TrimSpace(deadLetterSubject) == "" {
+		// No DLQ configured; Nak to avoid loss.
+		err := msg.Nak()
+		if err != nil {
+			log.Error("Failed to NAK without DLQ: %v", err)
+		}
+
+		return
+	}
+
+	var lastErr error
+
+	payload := msg.Data()
+	for attempt := 1; attempt <= dlqPublishMaxRetries; attempt++ {
+		_, err := jetStream.Publish(ctx, deadLetterSubject, payload)
+		if err == nil {
+			ackErr := msg.Ack()
+			if ackErr != nil {
+				log.Error("Failed to ACK after DLQ publish: %v", ackErr)
+			}
+
+			return
+		}
+
+		lastErr = err
+		log.Warn("DLQ publish attempt %d/%d failed: %v", attempt, dlqPublishMaxRetries, err)
+		time.Sleep(dlqPublishBackoffDuration)
+	}
+
+	log.Error("Exhausted DLQ publish retries: %v", lastErr)
+
+	err := msg.NakWithDelay(dlqPublishBackoffDuration)
 	if err != nil {
-		j.appLogger.Error("Failed to TERM message: %v", err)
+		log.Error("Failed to NAK with delay after DLQ failure: %v", err)
 	}
 }
 
-func getExecutableDir() (string, error) {
-	exePath, err := os.Executable()
-	if err != nil {
-		return "", fmt.Errorf("failed to get executable path: %w", err)
-	}
-
-	return filepath.Dir(exePath), nil
-}
-
-func uploadFileToObjectStore(
+func uploadBytesToObjectStore(
 	ctx context.Context,
 	store jetstream.ObjectStore,
-	objectName, filePath string,
-	log *logger.Logger,
+	objectName string,
+	data []byte,
 ) error {
-	file, openErr := os.Open(filePath) // #nosec G304 -- filePath points to renderer-managed output in the job workspace
-	if openErr != nil {
-		return fmt.Errorf("failed to open file for upload: %w", openErr)
-	}
-
-	defer func() {
-		closeErr := file.Close()
-		if closeErr != nil {
-			if log != nil {
-				log.Warn("Failed to close file '%s': %v", filePath, closeErr)
-			} else {
-				fmt.Fprintf(os.Stderr, "Failed to close file '%s': %v\n", filePath, closeErr)
-			}
-		}
-	}()
-
-	meta := jetstream.ObjectMeta{
-		Name:        objectName,
-		Description: "",
-		Headers:     nil,
-		Metadata:    nil,
-		Opts:        nil,
-	}
-
-	_, putErr := store.Put(ctx, meta, file)
+	_, putErr := store.PutBytes(ctx, objectName, data)
 	if putErr != nil {
 		return fmt.Errorf("failed to put file in object store: %w", putErr)
 	}

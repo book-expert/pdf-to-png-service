@@ -16,6 +16,11 @@ type pageJob struct {
 	pageIndex  int
 }
 
+type pageJobFromBytes struct {
+	pdfData   []byte
+	pageIndex int
+}
+
 // pageProcessor manages the concurrent rendering of pages for a single PDF file.
 type pageProcessor struct {
 	parent    *Processor // A reference back to the main processor for config and logging.
@@ -72,6 +77,52 @@ func (pp *pageProcessor) processPages(
 	return nil
 }
 
+// processPagesFromBytes orchestrates the rendering of all pages in a PDF from a byte slice.
+func (pp *pageProcessor) processPagesFromBytes(
+	ctx context.Context,
+	pdfData []byte,
+	pageCount int,
+) ([][]byte, error) {
+	jobs := make(chan pageJobFromBytes, pageCount)
+	results := make(chan []byte, pageCount)
+
+	var waitGroup sync.WaitGroup
+
+	// Start a pool of worker goroutines.
+	for range pp.parent.config.Workers {
+		waitGroup.Add(1)
+
+		go pp.pageWorkerFromBytes(ctx, &waitGroup, jobs, results)
+	}
+
+	// Create a progress bar specifically for the pages of this PDF.
+	pageProgressBar := pb.New(pageCount).
+		SetTemplateString(`  {{ bar . " " "▸" "▹" " " " "}} {{percent .}} {{etime .}}`).
+		SetWriter(pp.parent.config.ProgressBarOutput).
+		Start()
+	defer pageProgressBar.Finish()
+
+	// Send a job to the workers for each page.
+	for i := 1; i <= pageCount; i++ {
+		jobs <- pageJobFromBytes{
+			pdfData:   pdfData,
+			pageIndex: i,
+		}
+	}
+
+	close(jobs) // No more jobs will be sent.
+
+	waitGroup.Wait() // Wait for all workers to finish.
+	close(results)
+
+	pngs := make([][]byte, 0, pageCount)
+	for pngData := range results {
+		pngs = append(pngs, pngData)
+	}
+
+	return pngs, nil
+}
+
 // pageWorker is a goroutine that pulls jobs from the channel and processes them.
 // It runs until the jobs channel is closed and empty.
 func (pp *pageProcessor) pageWorker(
@@ -104,6 +155,39 @@ func (pp *pageProcessor) pageWorker(
 	}
 }
 
+// pageWorkerFromBytes is a goroutine that pulls jobs from the channel and processes them.
+func (pp *pageProcessor) pageWorkerFromBytes(
+	ctx context.Context,
+	waitGroup *sync.WaitGroup,
+	jobs <-chan pageJobFromBytes,
+	results chan<- []byte,
+) {
+	defer waitGroup.Done()
+
+	for job := range jobs {
+		// Check if the context has been canceled (e.g., by Ctrl+C).
+		if ctx.Err() != nil {
+			pp.parent.log.Warn(
+				"Context canceled, skipping job for page %d",
+				job.pageIndex,
+			)
+
+			return
+		}
+
+		pngData, processErr := pp.processSinglePageFromBytes(ctx, job)
+		if processErr != nil {
+			pp.parent.log.Warn(
+				"Failed to process page %d: %v",
+				job.pageIndex,
+				processErr,
+			)
+		} else {
+			results <- pngData
+		}
+	}
+}
+
 // processSinglePage contains the logic for rendering and checking a single page.
 func (pp *pageProcessor) processSinglePage(ctx context.Context, job pageJob) error {
 	// Step 1: Render the PDF page to a PNG image using Ghostscript.
@@ -112,7 +196,8 @@ func (pp *pageProcessor) processSinglePage(ctx context.Context, job pageJob) err
 		return fmt.Errorf("rendering failed: %w", renderErr)
 	}
 
-	// Step 2: Check the resulting PNG for blankness and delete it if necessary.
+	// Step 2: Check the resulting PNG for blankness and delete it if it's determined to
+	// be blank.
 	detectionErr := pp.parent.handleBlankDetection(ctx, job.outputPath)
 	if detectionErr != nil {
 		// Log this as a warning because the page was still rendered,
@@ -125,4 +210,15 @@ func (pp *pageProcessor) processSinglePage(ctx context.Context, job pageJob) err
 	}
 
 	return nil
+}
+
+// processSinglePageFromBytes contains the logic for rendering a single page from a byte slice.
+func (pp *pageProcessor) processSinglePageFromBytes(ctx context.Context, job pageJobFromBytes) ([]byte, error) {
+	// Step 1: Render the PDF page to a PNG image using Ghostscript.
+	pngData, renderErr := pp.parent.renderPageFromBytes(ctx, job.pdfData, job.pageIndex)
+	if renderErr != nil {
+		return nil, fmt.Errorf("rendering failed: %w", renderErr)
+	}
+
+	return pngData, nil
 }

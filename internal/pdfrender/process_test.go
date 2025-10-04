@@ -4,6 +4,7 @@ import (
 	"bytes"
 	"context"
 	"fmt"
+	"io"
 	"os"
 	"path/filepath"
 	"strings"
@@ -59,6 +60,15 @@ func (f *fakeExec) RunCombined(
 	}
 
 	return f.combinedOut, f.err
+}
+
+func (f *fakeExec) RunWithStdin(
+	_ context.Context,
+	_ io.Reader,
+	_ string,
+	_ ...string,
+) ([]byte, error) {
+	return nil, nil
 }
 
 func TestValidateConfig(t *testing.T) {
