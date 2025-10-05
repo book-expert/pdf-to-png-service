@@ -24,11 +24,19 @@ import (
 	"github.com/book-expert/pdf-to-png-service/internal/pdfrender"
 )
 
+// ServiceNATSConfigLocal represents the overall configuration structure for the pdf-to-png-service.
+type ServiceNATSConfigLocal struct {
+	Streams      []configurator.StreamConfig      `toml:"streams"`
+	Consumers    []configurator.ConsumerConfig    `toml:"consumers"`
+	ObjectStores []configurator.ObjectStoreConfig `toml:"object_stores"`
+}
+
 // Config represents the overall configuration structure for the pdf-to-png-service.
 type Config struct {
-	ServiceNATS configurator.ServiceNATSConfig `toml:"pdf-to-png-service"`
-	Paths       PathsConfig                    `toml:"paths"`
-	PDFToPNG    PDFToPNGServiceConfig          `toml:"pdf_to_png_service"`
+	NATS        configurator.NATSConfig `toml:"nats"`
+	ServiceNATS ServiceNATSConfigLocal  `toml:"pdf-to-png-service.nats"`
+	Paths       PathsConfig             `toml:"paths"`
+	PDFToPNG    PDFToPNGServiceConfig   `toml:"pdf_to_png_service"`
 }
 
 // PathsConfig holds common path configurations.
@@ -40,6 +48,8 @@ type PathsConfig struct {
 type PDFToPNGServiceConfig struct {
 	DeadLetterSubject string `toml:"dead_letter_subject"`
 }
+
+var errNoConsumersConfigured = errors.New("no consumers configured for the service")
 
 // job represents the context for processing a single message.
 type job struct {
@@ -111,7 +121,8 @@ func run(ctx context.Context) error {
 
 	natsConnection, jetStream, consumer, err := setupNATSComponents(
 		ctx,
-		&cfg.ServiceNATS,
+		cfg.NATS,
+		cfg.ServiceNATS,
 	)
 	if err != nil {
 		return fmt.Errorf("failed to setup NATS components: %w", err)
@@ -119,7 +130,7 @@ func run(ctx context.Context) error {
 	defer natsConnection.Close()
 
 	// Ensure DLQ stream for the configured subject exists.
-	dlqErr := ensureDLQStream(ctx, jetStream, &cfg.ServiceNATS, cfg.PDFToPNG.DeadLetterSubject)
+	dlqErr := ensureDLQStream(ctx, jetStream, cfg.ServiceNATS, cfg.PDFToPNG.DeadLetterSubject)
 	if dlqErr != nil {
 		return dlqErr
 	}
@@ -134,35 +145,51 @@ func run(ctx context.Context) error {
 
 // setupNATSComponents initializes and configures NATS connection, JetStream, and
 // consumer.
-//
-// concrete type is not exported.
-//
+
 //nolint:ireturn // The jetstream functions return an interface, and the
 func setupNATSComponents(
 	ctx context.Context,
-	cfg *configurator.ServiceNATSConfig,
+	natsCfg configurator.NATSConfig,
+	serviceNatsCfg ServiceNATSConfigLocal,
 ) (*nats.Conn, jetstream.JetStream, jetstream.Consumer, error) {
-	natsConnection, jetStream, err := configurator.SetupNATSComponents(cfg.NATS)
+	// Construct the configurator.ServiceNATSConfig from the provided arguments.
+	fullServiceNatsCfg := configurator.ServiceNATSConfig{
+		NATS:         natsCfg,
+		Streams:      serviceNatsCfg.Streams,
+		Consumers:    serviceNatsCfg.Consumers,
+		ObjectStores: serviceNatsCfg.ObjectStores,
+		KeyValue:     nil,
+	}
+
+	if len(fullServiceNatsCfg.Consumers) == 0 {
+		return nil, nil, nil, errNoConsumersConfigured
+	}
+
+	natsConnection, jetStream, err := configurator.SetupNATSComponents(fullServiceNatsCfg.NATS)
 	if err != nil {
 		return nil, nil, nil, fmt.Errorf("failed to setup nats components: %w", err)
 	}
 
-	err = configurator.CreateOrUpdateStreams(ctx, jetStream, cfg.Streams)
+	err = configurator.CreateOrUpdateStreams(ctx, jetStream, fullServiceNatsCfg.Streams)
 	if err != nil {
 		return nil, nil, nil, fmt.Errorf("failed to create or update streams: %w", err)
 	}
 
-	err = configurator.CreateOrUpdateConsumers(ctx, jetStream, cfg.Consumers)
+	err = configurator.CreateOrUpdateConsumers(ctx, jetStream, fullServiceNatsCfg.Consumers)
 	if err != nil {
 		return nil, nil, nil, fmt.Errorf("failed to create or update consumers: %w", err)
 	}
 
-	err = configurator.CreateOrUpdateObjectStores(ctx, jetStream, cfg.ObjectStores)
+	err = configurator.CreateOrUpdateObjectStores(ctx, jetStream, fullServiceNatsCfg.ObjectStores)
 	if err != nil {
 		return nil, nil, nil, fmt.Errorf("failed to create or update object stores: %w", err)
 	}
 
-	consumer, err := jetStream.Consumer(ctx, cfg.Consumers[0].StreamName, cfg.Consumers[0].ConsumerName)
+	consumer, err := jetStream.Consumer(
+		ctx,
+		fullServiceNatsCfg.Consumers[0].StreamName,
+		fullServiceNatsCfg.Consumers[0].ConsumerName,
+	)
 	if err != nil {
 		return nil, nil, nil, fmt.Errorf("failed to get consumer: %w", err)
 	}
@@ -176,7 +203,7 @@ var errDeadLetterSubjectNotConfigured = errors.New("dead letter subject must be 
 func ensureDLQStream(
 	ctx context.Context,
 	jetStream jetstream.JetStream,
-	serviceNATS *configurator.ServiceNATSConfig,
+	serviceNATS ServiceNATSConfigLocal,
 	deadLetterSubject string,
 ) error {
 	if strings.TrimSpace(deadLetterSubject) == "" {
@@ -601,7 +628,13 @@ func (j *job) publishSinglePNG(
 
 	j.appLogger.Info("Job [%s]: Uploaded '%s'", j.header.WorkflowID, objectName)
 
-	publishEventErr := j.publishPNGCreatedEvent(ctx, objectName, pageCount, index+1, j.event.Augmentation)
+	publishEventErr := j.publishPNGCreatedEvent(
+		ctx,
+		objectName,
+		pageCount,
+		index+1,
+		j.event.Augmentation,
+	)
 	if publishEventErr != nil {
 		return fmt.Errorf(
 			"failed to publish event for '%s': %w",
