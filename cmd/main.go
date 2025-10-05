@@ -33,10 +33,12 @@ type ServiceNATSConfigLocal struct {
 
 // Config represents the overall configuration structure for the pdf-to-png-service.
 type Config struct {
-	NATS        configurator.NATSConfig `toml:"nats"`
-	ServiceNATS ServiceNATSConfigLocal  `toml:"pdf-to-png-service.nats"`
-	Paths       PathsConfig             `toml:"paths"`
-	PDFToPNG    PDFToPNGServiceConfig   `toml:"pdf_to_png_service"`
+	NATS    configurator.NATSConfig `toml:"nats"`
+	Service struct {
+		NATS ServiceNATSConfigLocal `toml:"nats"`
+	} `toml:"pdf-to-png-service"`
+	Paths    PathsConfig           `toml:"paths"`
+	PDFToPNG PDFToPNGServiceConfig `toml:"pdf_to_png_service"`
 }
 
 // PathsConfig holds common path configurations.
@@ -122,7 +124,7 @@ func run(ctx context.Context) error {
 	natsConnection, jetStream, consumer, err := setupNATSComponents(
 		ctx,
 		cfg.NATS,
-		cfg.ServiceNATS,
+		cfg.Service.NATS,
 	)
 	if err != nil {
 		return fmt.Errorf("failed to setup NATS components: %w", err)
@@ -130,14 +132,14 @@ func run(ctx context.Context) error {
 	defer natsConnection.Close()
 
 	// Ensure DLQ stream for the configured subject exists.
-	dlqErr := ensureDLQStream(ctx, jetStream, cfg.ServiceNATS, cfg.PDFToPNG.DeadLetterSubject)
+	dlqErr := ensureDLQStream(ctx, jetStream, cfg.Service.NATS, cfg.PDFToPNG.DeadLetterSubject)
 	if dlqErr != nil {
 		return dlqErr
 	}
 
 	appLogger.Info(
 		"Worker is running, listening for jobs on '%s'...",
-		cfg.ServiceNATS.Consumers[0].FilterSubject,
+		cfg.Service.NATS.Consumers[0].FilterSubject,
 	)
 
 	return processMessages(ctx, consumer, jetStream, cfg, appLogger)
@@ -283,8 +285,8 @@ func processMessages(
 	pdfStore, pngStore, err := getObjectStores(
 		ctx,
 		jetStream,
-		cfg.ServiceNATS.ObjectStores[0].BucketName,
-		cfg.ServiceNATS.ObjectStores[1].BucketName,
+		cfg.Service.NATS.ObjectStores[0].BucketName,
+		cfg.Service.NATS.ObjectStores[1].BucketName,
 	)
 	if err != nil {
 		return err
@@ -677,7 +679,7 @@ func (j *job) publishPNGCreatedEvent(
 		return fmt.Errorf("failed to marshal PNGCreatedEvent: %w", marshalErr)
 	}
 
-	_, pubErr := j.jetStream.Publish(ctx, j.cfg.ServiceNATS.Streams[1].Subjects[0], eventJSON)
+	_, pubErr := j.jetStream.Publish(ctx, j.cfg.Service.NATS.Streams[1].Subjects[0], eventJSON)
 	if pubErr != nil {
 		return fmt.Errorf("failed to publish PNGCreatedEvent: %w", pubErr)
 	}
