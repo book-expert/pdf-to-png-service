@@ -623,6 +623,7 @@ func (j *job) publishPNGCreatedEvent(
 	ctx context.Context,
 	pngKey string,
 	totalPages, pageNum int,
+	augmentation *events.AugmentationPreferences,
 ) error {
 	pngEvent := events.PNGCreatedEvent{
 		Header: events.EventHeader{
@@ -635,7 +636,7 @@ func (j *job) publishPNGCreatedEvent(
 		PNGKey:       pngKey,
 		PageNumber:   pageNum,
 		TotalPages:   totalPages,
-		Augmentation: j.event.Augmentation,
+		Augmentation: augmentation,
 	}
 
 	eventJSON, marshalErr := json.Marshal(pngEvent)
