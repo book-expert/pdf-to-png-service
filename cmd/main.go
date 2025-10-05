@@ -43,7 +43,6 @@ type PDFToPNGServiceConfig struct {
 
 // job represents the context for processing a single message.
 type job struct {
-	nats      *nats.Conn
 	msg       jetstream.Msg
 	jetStream jetstream.JetStream
 	pdfStore  jetstream.ObjectStore
@@ -415,7 +414,6 @@ func newJob(
 	}
 
 	return &job{
-		nats:      nil,
 		msg:       msg,
 		jetStream: jetStream,
 		pdfStore:  pdfStore,
@@ -603,7 +601,7 @@ func (j *job) publishSinglePNG(
 
 	j.appLogger.Info("Job [%s]: Uploaded '%s'", j.header.WorkflowID, objectName)
 
-	publishEventErr := j.publishPNGCreatedEvent(ctx, objectName, pageCount, index+1)
+	publishEventErr := j.publishPNGCreatedEvent(ctx, objectName, pageCount, index+1, j.event.Augmentation)
 	if publishEventErr != nil {
 		return fmt.Errorf(
 			"failed to publish event for '%s': %w",
@@ -621,7 +619,6 @@ func (j *job) publishSinglePNG(
 	return nil
 }
 
-// publishPNGCreatedEvent marshals and publishes a PNGCreatedEvent.
 func (j *job) publishPNGCreatedEvent(
 	ctx context.Context,
 	pngKey string,
@@ -635,20 +632,10 @@ func (j *job) publishPNGCreatedEvent(
 			EventID:    uuid.New().String(),
 			Timestamp:  time.Now(),
 		},
-		PNGKey:     pngKey,
-		PageNumber: pageNum,
-		TotalPages: totalPages,
-		Augmentation: &events.AugmentationPreferences{
-			Commentary: events.AugmentationCommentarySettings{
-				Enabled:            false,
-				CustomInstructions: "",
-			},
-			Summary: events.AugmentationSummarySettings{
-				Enabled:            false,
-				Placement:          "",
-				CustomInstructions: "",
-			},
-		},
+		PNGKey:       pngKey,
+		PageNumber:   pageNum,
+		TotalPages:   totalPages,
+		Augmentation: j.event.Augmentation,
 	}
 
 	eventJSON, marshalErr := json.Marshal(pngEvent)
