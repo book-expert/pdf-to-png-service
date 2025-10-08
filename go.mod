@@ -3,9 +3,9 @@ module github.com/book-expert/pdf-to-png-service
 go 1.25.1
 
 require (
-	github.com/book-expert/configurator v0.2.7
+	github.com/book-expert/configurator v0.2.9
 	github.com/book-expert/events v0.3.1
-	github.com/book-expert/logger v0.1.3
+	github.com/book-expert/logger v0.1.4
 	github.com/cheggaaa/pb/v3 v3.1.7
 	github.com/google/uuid v1.6.0
 	github.com/nats-io/nats.go v1.46.1

@@ -24,31 +24,18 @@ import (
 	"github.com/book-expert/pdf-to-png-service/internal/pdfrender"
 )
 
-// ServiceNATSConfigLocal represents the overall configuration structure for the pdf-to-png-service.
-type ServiceNATSConfigLocal struct {
-	Streams      []configurator.StreamConfig      `toml:"streams"`
-	Consumers    []configurator.ConsumerConfig    `toml:"consumers"`
-	ObjectStores []configurator.ObjectStoreConfig `toml:"object_stores"`
-}
-
 // Config represents the overall configuration structure for the pdf-to-png-service.
 type Config struct {
 	NATS    configurator.NATSConfig `toml:"nats"`
 	Service struct {
-		NATS ServiceNATSConfigLocal `toml:"nats"`
+		NATS configurator.ServiceNATSConfig `toml:"nats"`
 	} `toml:"pdf-to-png-service"`
-	Paths    PathsConfig           `toml:"paths"`
-	PDFToPNG PDFToPNGServiceConfig `toml:"pdf_to_png_service"`
-}
-
-// PathsConfig holds common path configurations.
-type PathsConfig struct {
-	BaseLogsDir string `toml:"base_logs_dir"`
-}
-
-// PDFToPNGServiceConfig holds service-specific settings.
-type PDFToPNGServiceConfig struct {
-	DeadLetterSubject string `toml:"dead_letter_subject"`
+	Paths struct {
+		BaseLogsDir string `toml:"base_logs_dir"`
+	} `toml:"paths"`
+	PDFToPNG struct {
+		DeadLetterSubject string `toml:"dead_letter_subject"`
+	} `toml:"pdf_to_png_service"`
 }
 
 var errNoConsumersConfigured = errors.New("no consumers configured for the service")
@@ -86,24 +73,8 @@ func main() {
 
 	err := run(ctx)
 	if err != nil {
-		// Use a short-lived bootstrap logger to record fatal errors.
-		bootstrapLogger, bErr := logger.New(os.TempDir(), "pdf-to-png-bootstrap.log")
-		if bErr == nil {
-			bootstrapLogger.Error("Fatal application error: %v", err)
-			_ = bootstrapLogger.Close()
-		} else {
-			// Fallback to stderr if logger cannot be created.
-			fmt.Fprintf(os.Stderr, "Fatal application error: %v\n", err)
-		}
-
-		return
-	}
-
-	// Log graceful shutdown using a bootstrap logger.
-	shutdownLogger, sErr := logger.New(os.TempDir(), "pdf-to-png-bootstrap.log")
-	if sErr == nil {
-		shutdownLogger.Info("Application shut down gracefully.")
-		_ = shutdownLogger.Close()
+		bootstrapLogger, _ := logger.New("", "")
+		bootstrapLogger.Errorf("Fatal application error: %v", err)
 	}
 }
 
@@ -117,7 +88,7 @@ func run(ctx context.Context) error {
 	defer func() {
 		err := appLogger.Close()
 		if err != nil {
-			appLogger.Warn("failed to close app logger: %v", err)
+			appLogger.Warnf("failed to close app logger: %v", err)
 		}
 	}()
 
@@ -137,7 +108,7 @@ func run(ctx context.Context) error {
 		return dlqErr
 	}
 
-	appLogger.Info(
+	appLogger.Infof(
 		"Worker is running, listening for jobs on '%s'...",
 		cfg.Service.NATS.Consumers[0].FilterSubject,
 	)
@@ -147,50 +118,41 @@ func run(ctx context.Context) error {
 
 // setupNATSComponents initializes and configures NATS connection, JetStream, and
 // consumer.
-
+//
 //nolint:ireturn // The jetstream functions return an interface, and the
 func setupNATSComponents(
 	ctx context.Context,
 	natsCfg configurator.NATSConfig,
-	serviceNatsCfg ServiceNATSConfigLocal,
+	serviceNatsCfg configurator.ServiceNATSConfig,
 ) (*nats.Conn, jetstream.JetStream, jetstream.Consumer, error) {
-	// Construct the configurator.ServiceNATSConfig from the provided arguments.
-	fullServiceNatsCfg := configurator.ServiceNATSConfig{
-		NATS:         natsCfg,
-		Streams:      serviceNatsCfg.Streams,
-		Consumers:    serviceNatsCfg.Consumers,
-		ObjectStores: serviceNatsCfg.ObjectStores,
-		KeyValue:     nil,
-	}
-
-	if len(fullServiceNatsCfg.Consumers) == 0 {
+	if len(serviceNatsCfg.Consumers) == 0 {
 		return nil, nil, nil, errNoConsumersConfigured
 	}
 
-	natsConnection, jetStream, err := configurator.SetupNATSComponents(fullServiceNatsCfg.NATS)
+	natsConnection, jetStream, err := configurator.SetupNATSComponents(natsCfg)
 	if err != nil {
 		return nil, nil, nil, fmt.Errorf("failed to setup nats components: %w", err)
 	}
 
-	err = configurator.CreateOrUpdateStreams(ctx, jetStream, fullServiceNatsCfg.Streams)
+	err = configurator.CreateOrUpdateStreams(ctx, jetStream, serviceNatsCfg.Streams)
 	if err != nil {
 		return nil, nil, nil, fmt.Errorf("failed to create or update streams: %w", err)
 	}
 
-	err = configurator.CreateOrUpdateConsumers(ctx, jetStream, fullServiceNatsCfg.Consumers)
+	err = configurator.CreateOrUpdateConsumers(ctx, jetStream, serviceNatsCfg.Consumers)
 	if err != nil {
 		return nil, nil, nil, fmt.Errorf("failed to create or update consumers: %w", err)
 	}
 
-	err = configurator.CreateOrUpdateObjectStores(ctx, jetStream, fullServiceNatsCfg.ObjectStores)
+	err = configurator.CreateOrUpdateObjectStores(ctx, jetStream, serviceNatsCfg.ObjectStores)
 	if err != nil {
 		return nil, nil, nil, fmt.Errorf("failed to create or update object stores: %w", err)
 	}
 
 	consumer, err := jetStream.Consumer(
 		ctx,
-		fullServiceNatsCfg.Consumers[0].StreamName,
-		fullServiceNatsCfg.Consumers[0].ConsumerName,
+		serviceNatsCfg.Consumers[0].StreamName,
+		serviceNatsCfg.Consumers[0].DurableName,
 	)
 	if err != nil {
 		return nil, nil, nil, fmt.Errorf("failed to get consumer: %w", err)
@@ -205,7 +167,7 @@ var errDeadLetterSubjectNotConfigured = errors.New("dead letter subject must be 
 func ensureDLQStream(
 	ctx context.Context,
 	jetStream jetstream.JetStream,
-	serviceNATS ServiceNATSConfigLocal,
+	serviceNATS configurator.ServiceNATSConfig,
 	deadLetterSubject string,
 ) error {
 	if strings.TrimSpace(deadLetterSubject) == "" {
@@ -221,8 +183,12 @@ func ensureDLQStream(
 	}
 
 	dlq := configurator.StreamConfig{
-		Name:     "dlq",
-		Subjects: []string{deadLetterSubject},
+		Name:      "dlq",
+		Subjects:  []string{deadLetterSubject},
+		Storage:   "file",
+		Retention: "limits",
+		MaxMsgs:   -1,
+		MaxAge:    0,
 	}
 
 	err := configurator.CreateOrUpdateStreams(ctx, jetStream, []configurator.StreamConfig{dlq})
@@ -237,21 +203,7 @@ func ensureDLQStream(
 func setupConfigAndLogger() (*Config, *logger.Logger, error) {
 	var cfg Config
 
-	tempLogger, tempLoggerErr := logger.New(os.TempDir(), "pdf-to-png-bootstrap.log")
-	if tempLoggerErr != nil {
-		return nil, nil, fmt.Errorf(
-			"failed to create bootstrap logger: %w",
-			tempLoggerErr,
-		)
-	}
-
-	defer func() {
-		closeErr := tempLogger.Close()
-		if closeErr != nil {
-			// We are in bootstrap; best-effort warn via stderr if logger fails.
-			fmt.Fprintf(os.Stderr, "Warning: failed to close temp logger: %v\n", closeErr)
-		}
-	}()
+	tempLogger, _ := logger.New("", "")
 
 	loadErr := configurator.Load(&cfg, tempLogger)
 	if loadErr != nil {
@@ -261,7 +213,7 @@ func setupConfigAndLogger() (*Config, *logger.Logger, error) {
 		)
 	}
 
-	tempLogger.Info("Configuration loaded")
+	tempLogger.Infof("Configuration loaded")
 
 	appLogger, loggerErr := logger.New(
 		cfg.Paths.BaseLogsDir,
@@ -326,7 +278,7 @@ func processSingleBatch(
 			return // Not a fatal error, just continue the loop.
 		}
 
-		appLogger.Error("Error fetching messages: %v", err)
+		appLogger.Errorf("Error fetching messages: %v", err)
 
 		return // Logged the error, continue the loop.
 	}
@@ -378,7 +330,7 @@ func handleMessageBatch(
 			return nil, errNoMessage
 		}
 
-		appLogger.Error("Error fetching messages: %v", err)
+		appLogger.Errorf("Error fetching messages: %v", err)
 
 		return nil, fmt.Errorf("failed to fetch messages: %w", err)
 	}
@@ -408,7 +360,7 @@ func processBatch(
 
 	err := batch.Error()
 	if err != nil {
-		appLogger.Error("Error during message batch processing: %v", err)
+		appLogger.Errorf("Error during message batch processing: %v", err)
 	}
 }
 
@@ -419,7 +371,7 @@ func handleMessage(
 ) {
 	job, jobErr := newJob(msg, jetStream, pdfStore, pngStore, cfg, appLogger)
 	if jobErr != nil {
-		appLogger.Error("Failed to create job: %v", jobErr)
+		appLogger.Errorf("Failed to create job: %v", jobErr)
 		// Attempt DLQ publish of original payload.
 		handleFailure(ctx, jetStream, msg, cfg.PDFToPNG.DeadLetterSubject, appLogger)
 
@@ -443,17 +395,18 @@ func newJob(
 	}
 
 	return &job{
-		msg:       msg,
-		jetStream: jetStream,
-		pdfStore:  pdfStore,
-		pngStore:  pngStore,
-		cfg:       cfg,
-		appLogger: appLogger,
-		event:     event,
-		header:    &event.Header,
-		pdfData:   nil,
-		pngData:   nil,
-	}, nil
+			msg:       msg,
+			jetStream: jetStream,
+			pdfStore:  pdfStore,
+			pngStore:  pngStore,
+			cfg:       cfg,
+			appLogger: appLogger,
+			event:     event,
+			header:    &event.Header,
+			pdfData:   nil,
+			pngData:   nil,
+		},
+		nil
 }
 
 // unmarshalEvent unmarshals the PDFCreatedEvent from a message.
@@ -502,7 +455,7 @@ func (j *job) executeProcessingSteps(ctx context.Context) error {
 
 // run executes the full lifecycle of a job.
 func (j *job) run(ctx context.Context) {
-	j.appLogger.Info(
+	j.appLogger.Infof(
 		"Received job for WorkflowID [%s]: processing PDF key '%s'",
 		j.header.WorkflowID,
 		j.event.PDFKey,
@@ -510,7 +463,7 @@ func (j *job) run(ctx context.Context) {
 
 	progErr := j.msg.InProgress()
 	if progErr != nil {
-		j.appLogger.Warn("Failed to send InProgress update: %v", progErr)
+		j.appLogger.Warnf("Failed to send InProgress update: %v", progErr)
 	}
 
 	processingErr := j.executeProcessingSteps(ctx)
@@ -528,14 +481,14 @@ func (j *job) run(ctx context.Context) {
 func (j *job) handleProcessingError(ctx context.Context, processingErr error) {
 	var jErr *jobError
 	if errors.As(processingErr, &jErr) {
-		j.appLogger.Error(
+		j.appLogger.Errorf(
 			"Job [%s] failed: %v",
 			j.header.WorkflowID,
 			jErr.err,
 		)
 		jErr.handler(ctx, jErr.err)
 	} else {
-		j.appLogger.Error(
+		j.appLogger.Errorf(
 			"Job [%s] failed with unexpected error: %v",
 			j.header.WorkflowID,
 			processingErr,
@@ -553,7 +506,7 @@ func (j *job) downloadPDF(ctx context.Context) error {
 	defer func() {
 		err := obj.Close()
 		if err != nil {
-			j.appLogger.Warn("failed to close object store object: %v", err)
+			j.appLogger.Warnf("failed to close object store object: %v", err)
 		}
 	}()
 
@@ -567,7 +520,25 @@ func (j *job) downloadPDF(ctx context.Context) error {
 	return nil
 }
 
-// processPDF handles the PDF to PNG conversion.
+func (j *job) publishPNGs(ctx context.Context) error {
+	totalPages := len(j.pngData)
+	for index, png := range j.pngData {
+		pngKey := fmt.Sprintf("%s-%d.png", j.event.PDFKey, index+1)
+
+		err := uploadBytesToObjectStore(ctx, j.pngStore, pngKey, png)
+		if err != nil {
+			return fmt.Errorf("failed to upload PNG to object store: %w", err)
+		}
+
+		err = j.publishPNGCreatedEvent(ctx, pngKey, totalPages, index+1, j.event.Augmentation)
+		if err != nil {
+			return fmt.Errorf("failed to publish PNGCreatedEvent: %w", err)
+		}
+	}
+
+	return nil
+}
+
 func (j *job) processPDF(ctx context.Context) error {
 	opts := &pdfrender.Options{
 		InputPath:              "",
@@ -581,75 +552,12 @@ func (j *job) processPDF(ctx context.Context) error {
 	}
 	processor := pdfrender.NewProcessor(opts, j.appLogger)
 
-	pngs, processErr := processor.ProcessSinglePDFFromBytes(ctx, j.pdfData)
-	if processErr != nil {
-		return fmt.Errorf("failed to process PDF: %w", processErr)
+	pngs, err := processor.ProcessSinglePDFFromBytes(ctx, j.pdfData)
+	if err != nil {
+		return fmt.Errorf("failed to process PDF: %w", err)
 	}
 
 	j.pngData = pngs
-
-	return nil
-}
-
-// publishPNGs uploads PNGs to the object store and publishes events.
-func (j *job) publishPNGs(ctx context.Context) error {
-	pageCount := len(j.pngData)
-
-	j.appLogger.Info(
-		"Job [%s]: Found %d PNG(s) to publish.",
-		j.header.WorkflowID,
-		pageCount,
-	)
-
-	for index, pngData := range j.pngData {
-		err := j.publishSinglePNG(ctx, pngData, pageCount, index)
-		if err != nil {
-			return err
-		}
-	}
-
-	return nil
-}
-
-func (j *job) publishSinglePNG(
-	ctx context.Context,
-	pngData []byte,
-	pageCount, index int,
-) error {
-	objectName := fmt.Sprintf(
-		"%s/%s/page_%04d.png",
-		j.header.TenantID,
-		j.header.WorkflowID,
-		index+1,
-	)
-
-	uploadErr := uploadBytesToObjectStore(ctx, j.pngStore, objectName, pngData)
-	if uploadErr != nil {
-		return fmt.Errorf("failed to upload '%s': %w", objectName, uploadErr)
-	}
-
-	j.appLogger.Info("Job [%s]: Uploaded '%s'", j.header.WorkflowID, objectName)
-
-	publishEventErr := j.publishPNGCreatedEvent(
-		ctx,
-		objectName,
-		pageCount,
-		index+1,
-		j.event.Augmentation,
-	)
-	if publishEventErr != nil {
-		return fmt.Errorf(
-			"failed to publish event for '%s': %w",
-			objectName,
-			publishEventErr,
-		)
-	}
-
-	j.appLogger.Info(
-		"Job [%s]: Published job for '%s'",
-		j.header.WorkflowID,
-		objectName,
-	)
 
 	return nil
 }
@@ -690,23 +598,23 @@ func (j *job) publishPNGCreatedEvent(
 func (j *job) ack() {
 	err := j.msg.Ack()
 	if err != nil {
-		j.appLogger.Error(
+		j.appLogger.Errorf(
 			"Job [%s]: Failed to acknowledge message: %v",
 			j.header.WorkflowID,
 			err,
 		)
 	} else {
-		j.appLogger.Success("Job [%s]: Processing complete. Acknowledged.", j.header.WorkflowID)
+		j.appLogger.Successf("Job [%s]: Processing complete. Acknowledged.", j.header.WorkflowID)
 	}
 }
 
 func (j *job) nak(ctx context.Context, reason error) {
-	j.appLogger.Error("NAK'ing (via DLQ policy) job [%s]: %v", j.header.WorkflowID, reason)
+	j.appLogger.Errorf("NAK'ing (via DLQ policy) job [%s]: %v", j.header.WorkflowID, reason)
 	handleFailure(ctx, j.jetStream, j.msg, j.cfg.PDFToPNG.DeadLetterSubject, j.appLogger)
 }
 
 func (j *job) term(ctx context.Context, reason error) {
-	j.appLogger.Error(
+	j.appLogger.Errorf(
 		"Terminating (via DLQ policy) job [%s]: %v",
 		j.header.WorkflowID,
 		reason,
@@ -720,54 +628,55 @@ const (
 )
 
 // handleFailure publishes the failed payload to the DLQ subject and Ack/NakWithDelay accordingly.
+
 func handleFailure(
 	ctx context.Context,
+
 	jetStream jetstream.JetStream,
+
 	msg jetstream.Msg,
+
 	deadLetterSubject string,
+
 	log *logger.Logger,
 ) {
-	if strings.TrimSpace(deadLetterSubject) == "" {
-		// No DLQ configured; Nak to avoid loss.
-		err := msg.Nak()
-		if err != nil {
-			log.Error("Failed to NAK without DLQ: %v", err)
-		}
-
-		return
-	}
-
 	var lastErr error
 
 	payload := msg.Data()
+
 	for attempt := 1; attempt <= dlqPublishMaxRetries; attempt++ {
 		_, err := jetStream.Publish(ctx, deadLetterSubject, payload)
 		if err == nil {
 			ackErr := msg.Ack()
 			if ackErr != nil {
-				log.Error("Failed to ACK after DLQ publish: %v", ackErr)
+				log.Errorf("Failed to ACK after DLQ publish: %v", ackErr)
 			}
 
 			return
 		}
 
 		lastErr = err
-		log.Warn("DLQ publish attempt %d/%d failed: %v", attempt, dlqPublishMaxRetries, err)
+
+		log.Warnf("DLQ publish attempt %d/%d failed: %v", attempt, dlqPublishMaxRetries, err)
+
 		time.Sleep(dlqPublishBackoffDuration)
 	}
 
-	log.Error("Exhausted DLQ publish retries: %v", lastErr)
+	log.Errorf("Exhausted DLQ publish retries: %v", lastErr)
 
 	err := msg.NakWithDelay(dlqPublishBackoffDuration)
 	if err != nil {
-		log.Error("Failed to NAK with delay after DLQ failure: %v", err)
+		log.Errorf("Failed to NAK with delay after DLQ failure: %v", err)
 	}
 }
 
 func uploadBytesToObjectStore(
 	ctx context.Context,
+
 	store jetstream.ObjectStore,
+
 	objectName string,
+
 	data []byte,
 ) error {
 	_, putErr := store.PutBytes(ctx, objectName, data)

@@ -18,126 +18,95 @@ Core capabilities include:
 -   **Intelligent Blank Page Detection**: Optionally detects and removes blank pages.
 -   **Robust Error Handling**: Implements `ack`, `nak`, and `term` logic for handling NATS messages.
 
-## 1.4. Technology Stack
+## Technology Stack
 
-## 1.5. Architecture
-Here's a high-level overview of the `pdf-to-png-service` architecture:
-
-```mermaid
-flowchart TD
-      subgraph Service["cmd/main.go"]
-          start["run(ctx)"]
-          config["setupConfigAndLogger\n→ configurator.Load + logger.New"]
-          nats["setupNATSComponents\n→ connectToNATS"]
-          js["initializeJetStream"]
-          setup["setupJetStream\n→ create streams + object stores"]
-          loop["processMessages loop"]
-          fetch["handleMessageBatch\n→ consumer.Fetch"]
-          newjob["newJob\n→ unmarshal PDFCreatedEvent"]
-          download["job.downloadPDF\n→ pdfStore.GetFile"]
-          process["job.processPDF\n→ pdfrender.ProcessSinglePDF"]
-          publishpng["job.publishPNGs\n→ uploadFileToObjectStore + publishPNGCreatedEvent"]
-          ack["Ack / Nak / Term"]
-      end
-
-      subgraph Renderer["internal/pdfrender"]
-          ensure["ensureDetectBlankBinary"]
-          build["buildBlankDetector\n→ go build cmd/detect-blank"]
-          pages["getPDFPages\n→ pdfinfo"]
-          pageproc["pageProcessor.processPages\n→ worker pool"]
-          renderpage["renderPage\n→ ghostscript"]
-          detect["handleBlankDetection\n→ detect-blank"]
-      end
-
-      subgraph Stores["NATS JetStream"]
-          pdfstore["PDF Object Store"]
-          pngstore["PNG Object Store"]
-          streams["PDF Stream + Consumer"]
-          pngstream["PNG Stream"]
-      end
-
-      subgraph Tools["External CLI tools"]
-          pdfinfoCLI["pdfinfo"]
-          ghostscriptCLI["ghostscript"]
-          detectBlankBinary["detect-blank binary"]
-      end
-
-      start --> config --> nats --> js --> setup --> loop
-      loop --> fetch --> newjob --> download
-      download --> pdfstore
-      newjob --> process
-      process --> ensure --> build
-      process --> pages --> pdfinfoCLI
-      process --> pageproc --> renderpage --> ghostscriptCLI
-      renderpage --> detect --> detectBlankBinary
-      process --> publishpng
-      publishpng --> pngstore
-      publishpng --> pngstream
-      publishpng --> ack --> loop
-      setup --> streams
-      setup --> pdfstore
-      setup --> pngstore
-      setup --> pngstream
-```
-
-
--   **Programming Language:** Go 1.25
--   **Messaging:** NATS
+-   **Programming Language:** Go
+-   **Messaging:** NATS JetStream
 -   **Libraries:**
     -   `github.com/nats-io/nats.go`
     -   `github.com/book-expert/configurator`
     -   `github.com/book-expert/events`
     -   `github.com/book-expert/logger`
-    -   `github.com/cheggaaa/pb/v3`
     -   `github.com/google/uuid`
     -   `github.com/stretchr/testify`
 
-## Getting Started
+## Architecture
 
-### Prerequisites
+```mermaid
+flowchart TD
+    subgraph "PDF-to-PNG Service"
+        A[NATS Consumer] --> B{Process Message};
+        B --> C[Download PDF from Object Store];
+        C --> D[Convert PDF to PNGs];
+        D --> E[Upload PNGs to Object Store];
+        E --> F[Publish PNGCreatedEvent];
+    end
 
--   Go 1.25 or later.
--   NATS server with JetStream enabled.
--   Ghostscript (`gs`) installed and available in the system's `PATH`.
-
-### Installation
-
-To build the service, you can use the `make build` command:
-
-```bash
-make build
+    subgraph "NATS JetStream"
+        G[PDFs Stream] --> A;
+        F --> H[PNGs Stream];
+        C --> I[PDF_FILES Object Store];
+        E --> J[PNG_FILES Object Store];
+    end
 ```
 
-This will create the `pdf-to-png-service` binary in the `bin` directory.
+## Configuration
 
-### Configuration
-
-The service requires a TOML configuration file to be accessible via a URL specified by the `PROJECT_TOML` environment variable. The configuration file should have the following structure:
+The service is configured via a `project.toml` file, loaded by the `configurator` service. The following is an example configuration for the `pdf-to-png-service`:
 
 ```toml
-[nats]
-url = "nats://localhost:4222"
-pdf_stream_name = "pdfs"
-pdf_consumer_name = "pdf_processor"
-pdf_created_subject = "pdf.created"
-pdf_object_store_bucket = "pdf_files"
-png_stream_name = "pngs"
-png_created_subject = "png.created"
-png_object_store_bucket = "png_images"
+[pdf_to_png_service]
+dead_letter_subject = "book-expert.pdf-to-png.dlq"
 
-[paths]
-base_logs_dir = "/var/log/pdf-to-png-service"
+[[pdf_to_png_service.nats.streams]]
+name = "PDFS"
+subjects = ["book-expert.pdfs.created"]
+storage = "file"
+retention = "limits"
+max_msgs = 10000
+max_age = 86400
+
+[[pdf_to_png_service.nats.streams]]
+name = "PNGS"
+subjects = ["book-expert.pngs.created"]
+storage = "file"
+retention = "limits"
+max_msgs = 50000
+max_age = 86400
+
+[[pdf_to_png_service.nats.streams]]
+name = "PDF_TO_PNG_DLQ"
+subjects = ["book-expert.pdf-to-png.dlq"]
+storage = "file"
+retention = "limits"
+
+[[pdf_to_png_service.nats.consumers]]
+stream_name = "PDFS"
+durable_name = "pdf-to-png-durable"
+filter_subject = "book-expert.pdfs.created"
+ack_policy = "explicit"
+max_deliver = 3
+max_ack_pending = 20
+ack_wait = 300000000000
+
+[[pdf_to_png_service.nats.producers]]
+subject = "book-expert.pngs.created"
+stream = "PNGS"
+
+[[pdf_to_png_service.nats.object_stores]]
+bucket_name = "PDF_FILES"
+
+[[pdf_to_png_service.nats.object_stores]]
+bucket_name = "PNG_FILES"
 ```
 
 ## Usage
 
-To run the service, execute the binary:
+To run the service, you need to have a NATS server running and the `project.toml` file available at the URL specified by the `PROJECT_TOML` environment variable. Then, you can run the service using the following command:
 
 ```bash
-./bin/pdf-to-png-service
+make run
 ```
-
-The service will connect to NATS and start listening for messages.
 
 ## Testing
 

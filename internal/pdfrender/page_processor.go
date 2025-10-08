@@ -135,9 +135,8 @@ func (pp *pageProcessor) pageWorker(
 	for job := range jobs {
 		// Check if the context has been canceled (e.g., by Ctrl+C).
 		if ctx.Err() != nil {
-			pp.parent.log.Warn(
-				"Context canceled, skipping job for page %d",
-				job.pageIndex,
+			pp.parent.log.Warnf(
+				fmt.Sprintf("Context canceled, skipping job for page %d", job.pageIndex),
 			)
 
 			return
@@ -145,11 +144,8 @@ func (pp *pageProcessor) pageWorker(
 
 		processErr := pp.processSinglePage(ctx, job)
 		if processErr != nil {
-			pp.parent.log.Warn(
-				"Failed to process page %d of %s: %v",
-				job.pageIndex,
-				filepath.Base(job.pdfPath),
-				processErr,
+			pp.parent.log.Warnf(
+				fmt.Sprintf("Failed to process page %d of %s: %v", job.pageIndex, filepath.Base(job.pdfPath), processErr),
 			)
 		}
 	}
@@ -167,9 +163,8 @@ func (pp *pageProcessor) pageWorkerFromBytes(
 	for job := range jobs {
 		// Check if the context has been canceled (e.g., by Ctrl+C).
 		if ctx.Err() != nil {
-			pp.parent.log.Warn(
-				"Context canceled, skipping job for page %d",
-				job.pageIndex,
+			pp.parent.log.Warnf(
+				fmt.Sprintf("Context canceled, skipping job for page %d", job.pageIndex),
 			)
 
 			return
@@ -177,10 +172,8 @@ func (pp *pageProcessor) pageWorkerFromBytes(
 
 		pngData, processErr := pp.processSinglePageFromBytes(ctx, job)
 		if processErr != nil {
-			pp.parent.log.Warn(
-				"Failed to process page %d: %v",
-				job.pageIndex,
-				processErr,
+			pp.parent.log.Warnf(
+				fmt.Sprintf("Failed to process page %d: %v", job.pageIndex, processErr),
 			)
 		} else {
 			results <- pngData
@@ -202,10 +195,8 @@ func (pp *pageProcessor) processSinglePage(ctx context.Context, job pageJob) err
 	if detectionErr != nil {
 		// Log this as a warning because the page was still rendered,
 		// but we failed to determine if it was blank.
-		pp.parent.log.Warn(
-			"Blank detection failed for %s: %v",
-			filepath.Base(job.outputPath),
-			detectionErr,
+		pp.parent.log.Warnf(
+			fmt.Sprintf("Blank detection failed for %s: %v", filepath.Base(job.outputPath), detectionErr),
 		)
 	}
 

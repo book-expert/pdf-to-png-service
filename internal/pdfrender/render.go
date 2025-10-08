@@ -125,7 +125,7 @@ func (processor *Processor) Process(ctx context.Context) error {
 	}
 
 	// Step 4: Process each discovered PDF file.
-	processor.log.Info("Found %d PDF(s) to process.", len(pdfPaths))
+	processor.log.Infof(fmt.Sprintf("Found %d PDF(s) to process.", len(pdfPaths)))
 
 	return processor.processAllPDFs(ctx, pdfPaths)
 }
@@ -212,18 +212,16 @@ func (processor *Processor) processAllPDFs(ctx context.Context, pdfPaths []strin
 
 	for _, pdfPath := range pdfPaths {
 		mainProgressBar.Increment()
-		processor.log.Info("Starting processing for: %s", filepath.Base(pdfPath))
+		processor.log.Infof("Starting processing for: " + filepath.Base(pdfPath))
 
 		_, processErr := processor.processOnePDF(ctx, pdfPath)
 		if processErr != nil {
-			processor.log.Error(
-				"Failed to process %s: %v",
-				filepath.Base(pdfPath),
-				processErr,
+			processor.log.Errorf(
+				fmt.Sprintf("Failed to process %s: %v", filepath.Base(pdfPath), processErr),
 			)
 			// Continue to the next file even if one fails.
 		} else {
-			processor.log.Success("Successfully processed %s", filepath.Base(pdfPath))
+			processor.log.Successf("Successfully processed " + filepath.Base(pdfPath))
 		}
 	}
 
@@ -248,7 +246,7 @@ func (processor *Processor) processOnePDF(ctx context.Context, pdfPath string) (
 		return "", fmt.Errorf("could not set up output directory: %w", setupErr)
 	}
 
-	processor.log.Info("Rendering %d pages into %s", pageCount, outputDir)
+	processor.log.Infof(fmt.Sprintf("Rendering %d pages into %s", pageCount, outputDir))
 
 	// Create and run a PageProcessor to handle the concurrent rendering.
 	pageProc := newPageProcessor(processor, outputDir)
@@ -273,7 +271,7 @@ func (processor *Processor) processOnePDFFromBytes(ctx context.Context, pdfData 
 		return nil, ErrPDFZeroOrNegativePages
 	}
 
-	processor.log.Info("Rendering %d pages", pageCount)
+	processor.log.Infof(fmt.Sprintf("Rendering %d pages", pageCount))
 
 	// Create and run a PageProcessor to handle the concurrent rendering.
 	pageProc := newPageProcessor(processor, "")

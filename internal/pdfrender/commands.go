@@ -316,7 +316,7 @@ func (processor *Processor) handleBlankDetection(
 			)
 		}
 
-		processor.log.Info("Removed blank: %s", filepath.Base(pngPath))
+		processor.log.Infof("Removed blank: " + filepath.Base(pngPath))
 	}
 
 	return nil
@@ -409,7 +409,7 @@ func buildBlankDetector(
 	sourcePath, binaryPath string,
 	log *logger.Logger,
 ) error {
-	log.Info("Detect-blank binary not found. Building from source...")
+	log.Infof("Detect-blank binary not found. Building from source...")
 
 	binDir := filepath.Dir(binaryPath)
 
@@ -434,7 +434,7 @@ func buildBlankDetector(
 		)
 	}
 
-	log.Success("Successfully built detect-blank binary at %s", binaryPath)
+	log.Successf("Successfully built detect-blank binary at " + binaryPath)
 
 	return nil
 }
