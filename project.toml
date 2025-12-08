@@ -1,0 +1,23 @@
+[service]
+log_dir = "./logs"
+workers = 4
+dpi = 300
+blank_fuzz_percent = 5
+blank_non_white_threshold = 0.005
+
+[nats]
+url = "nats://192.168.122.102:4222"
+dlq_subject = "pdf-to-png.dlq"
+
+[nats.consumer]
+stream = "PDFS"
+subject = "pdfs.created"
+durable = "pdf-to-png-durable"
+
+[nats.producer]
+stream = "PNGS"
+subject = "pngs.created"
+
+[nats.object_store]
+pdf_bucket = "PDF_FILES"
+png_bucket = "PNG_FILES"

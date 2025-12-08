@@ -3,78 +3,26 @@ package pdfrender
 import (
 	"context"
 	"fmt"
-	"path/filepath"
 	"sync"
-
-	"github.com/cheggaaa/pb/v3"
 )
-
-// pageJob represents a single task for a worker to render one page of a PDF.
-type pageJob struct {
-	pdfPath    string
-	outputPath string
-	pageIndex  int
-}
 
 type pageJobFromBytes struct {
 	pdfData   []byte
 	pageIndex int
 }
 
-// pageProcessor manages the concurrent rendering of pages for a single PDF file.
+// pageProcessor manages the concurrent rendering of pages.
 type pageProcessor struct {
-	parent    *Processor // A reference back to the main processor for config and logging.
+	parent    *Processor
 	outputDir string
 }
 
-// newPageProcessor creates a new processor for handling the pages of one PDF.
+// newPageProcessor creates a new processor.
 func newPageProcessor(parent *Processor, outputDir string) *pageProcessor {
 	return &pageProcessor{
 		parent:    parent,
 		outputDir: outputDir,
 	}
-}
-
-// processPages orchestrates the rendering of all pages in a PDF.
-// It sets up a worker pool, distributes jobs, and waits for completion.
-func (pp *pageProcessor) processPages(
-	ctx context.Context,
-	pdfPath string,
-	pageCount int,
-) error {
-	jobs := make(chan pageJob, pageCount)
-
-	var waitGroup sync.WaitGroup
-
-	// Start a pool of worker goroutines.
-	for range pp.parent.config.Workers {
-		waitGroup.Add(1)
-
-		go pp.pageWorker(ctx, &waitGroup, jobs)
-	}
-
-	// Create a progress bar specifically for the pages of this PDF.
-	pageProgressBar := pb.New(pageCount).
-		SetTemplateString(`  {{ bar . " " "▸" "▹" " " " "}} {{percent .}} {{etime .}}`).
-		SetWriter(pp.parent.config.ProgressBarOutput).
-		Start()
-	defer pageProgressBar.Finish()
-
-	// Send a job to the workers for each page.
-	for i := 1; i <= pageCount; i++ {
-		pngPath := filepath.Join(pp.outputDir, fmt.Sprintf("page_%04d.png", i))
-		jobs <- pageJob{
-			pdfPath:    pdfPath,
-			pageIndex:  i,
-			outputPath: pngPath,
-		}
-	}
-
-	close(jobs) // No more jobs will be sent.
-
-	waitGroup.Wait() // Wait for all workers to finish.
-
-	return nil
 }
 
 // processPagesFromBytes orchestrates the rendering of all pages in a PDF from a byte slice.
@@ -84,7 +32,10 @@ func (pp *pageProcessor) processPagesFromBytes(
 	pageCount int,
 ) ([][]byte, error) {
 	jobs := make(chan pageJobFromBytes, pageCount)
-	results := make(chan []byte, pageCount)
+	results := make(chan struct {
+		index int
+		data  []byte
+	}, pageCount)
 
 	var waitGroup sync.WaitGroup
 
@@ -94,13 +45,6 @@ func (pp *pageProcessor) processPagesFromBytes(
 
 		go pp.pageWorkerFromBytes(ctx, &waitGroup, jobs, results)
 	}
-
-	// Create a progress bar specifically for the pages of this PDF.
-	pageProgressBar := pb.New(pageCount).
-		SetTemplateString(`  {{ bar . " " "▸" "▹" " " " "}} {{percent .}} {{etime .}}`).
-		SetWriter(pp.parent.config.ProgressBarOutput).
-		Start()
-	defer pageProgressBar.Finish()
 
 	// Send a job to the workers for each page.
 	for i := 1; i <= pageCount; i++ {
@@ -115,40 +59,39 @@ func (pp *pageProcessor) processPagesFromBytes(
 	waitGroup.Wait() // Wait for all workers to finish.
 	close(results)
 
-	pngs := make([][]byte, 0, pageCount)
-	for pngData := range results {
-		pngs = append(pngs, pngData)
+	// Collect and sort results
+	// We need to maintain order, so we'll use a map temporarily or pre-allocate slice
+	// Since we can have blanks removed, the output slice might be smaller than pageCount.
+	// However, the caller expects a list of PNGs. If we skip blanks, the indices change.
+
+	// Let's collect all valid PNGs.
+	// To preserve order relative to the PDF, we should collect them all and then sort by page index.
+
+	collectedPages := make([]struct {
+		index int
+		data  []byte
+	}, 0, pageCount)
+
+	for res := range results {
+		collectedPages = append(collectedPages, res)
 	}
 
-	return pngs, nil
-}
-
-// pageWorker is a goroutine that pulls jobs from the channel and processes them.
-// It runs until the jobs channel is closed and empty.
-func (pp *pageProcessor) pageWorker(
-	ctx context.Context,
-	waitGroup *sync.WaitGroup,
-	jobs <-chan pageJob,
-) {
-	defer waitGroup.Done()
-
-	for job := range jobs {
-		// Check if the context has been canceled (e.g., by Ctrl+C).
-		if ctx.Err() != nil {
-			pp.parent.log.Warnf(
-				fmt.Sprintf("Context canceled, skipping job for page %d", job.pageIndex),
-			)
-
-			return
-		}
-
-		processErr := pp.processSinglePage(ctx, job)
-		if processErr != nil {
-			pp.parent.log.Warnf(
-				fmt.Sprintf("Failed to process page %d of %s: %v", job.pageIndex, filepath.Base(job.pdfPath), processErr),
-			)
+	// Sort by page index
+	// Simple bubble sort is fine for page counts < 1000
+	for i := 0; i < len(collectedPages); i++ {
+		for j := 0; j < len(collectedPages)-1-i; j++ {
+			if collectedPages[j].index > collectedPages[j+1].index {
+				collectedPages[j], collectedPages[j+1] = collectedPages[j+1], collectedPages[j]
+			}
 		}
 	}
+
+	finalPNGs := make([][]byte, 0, len(collectedPages))
+	for _, p := range collectedPages {
+		finalPNGs = append(finalPNGs, p.data)
+	}
+
+	return finalPNGs, nil
 }
 
 // pageWorkerFromBytes is a goroutine that pulls jobs from the channel and processes them.
@@ -156,17 +99,15 @@ func (pp *pageProcessor) pageWorkerFromBytes(
 	ctx context.Context,
 	waitGroup *sync.WaitGroup,
 	jobs <-chan pageJobFromBytes,
-	results chan<- []byte,
+	results chan<- struct {
+		index int
+		data  []byte
+	},
 ) {
 	defer waitGroup.Done()
 
 	for job := range jobs {
-		// Check if the context has been canceled (e.g., by Ctrl+C).
 		if ctx.Err() != nil {
-			pp.parent.log.Warnf(
-				fmt.Sprintf("Context canceled, skipping job for page %d", job.pageIndex),
-			)
-
 			return
 		}
 
@@ -175,32 +116,13 @@ func (pp *pageProcessor) pageWorkerFromBytes(
 			pp.parent.log.Warnf(
 				fmt.Sprintf("Failed to process page %d: %v", job.pageIndex, processErr),
 			)
-		} else {
-			results <- pngData
+		} else if pngData != nil {
+			results <- struct {
+				index int
+				data  []byte
+			}{job.pageIndex, pngData}
 		}
 	}
-}
-
-// processSinglePage contains the logic for rendering and checking a single page.
-func (pp *pageProcessor) processSinglePage(ctx context.Context, job pageJob) error {
-	// Step 1: Render the PDF page to a PNG image using Ghostscript.
-	renderErr := pp.parent.renderPage(ctx, job.pdfPath, job.pageIndex, job.outputPath)
-	if renderErr != nil {
-		return fmt.Errorf("rendering failed: %w", renderErr)
-	}
-
-	// Step 2: Check the resulting PNG for blankness and delete it if it's determined to
-	// be blank.
-	detectionErr := pp.parent.handleBlankDetection(ctx, job.outputPath)
-	if detectionErr != nil {
-		// Log this as a warning because the page was still rendered,
-		// but we failed to determine if it was blank.
-		pp.parent.log.Warnf(
-			fmt.Sprintf("Blank detection failed for %s: %v", filepath.Base(job.outputPath), detectionErr),
-		)
-	}
-
-	return nil
 }
 
 // processSinglePageFromBytes contains the logic for rendering a single page from a byte slice.
@@ -209,6 +131,19 @@ func (pp *pageProcessor) processSinglePageFromBytes(ctx context.Context, job pag
 	pngData, renderErr := pp.parent.renderPageFromBytes(ctx, job.pdfData, job.pageIndex)
 	if renderErr != nil {
 		return nil, fmt.Errorf("rendering failed: %w", renderErr)
+	}
+
+	// Step 2: Check for blankness
+	isBlank, blankErr := pp.parent.IsImageBlank(pngData)
+	if blankErr != nil {
+		pp.parent.log.Warnf("Blank detection failed for page %d: %v", job.pageIndex, blankErr)
+		// Return the image anyway if detection fails
+		return pngData, nil
+	}
+
+	if isBlank {
+		pp.parent.log.Infof("Page %d detected as blank, skipping.", job.pageIndex)
+		return nil, nil // Return nil to signal this page should be skipped
 	}
 
 	return pngData, nil

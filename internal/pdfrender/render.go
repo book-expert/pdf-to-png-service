@@ -1,38 +1,41 @@
-// Package pdfrender provides PDF-to-PNG conversion functionality, including
-// command execution for external tools, file system operations, and PDF processing.
+// Package pdfrender provides PDF-to-PNG conversion functionality.
 package pdfrender
 
 import (
+	"bufio"
+	"bytes"
 	"context"
 	"errors"
 	"fmt"
 	"io"
 	"os"
-	"path/filepath"
+	"os/exec"
 	"runtime"
+	"strconv"
+	"strings"
 
 	"github.com/book-expert/logger"
-	"github.com/cheggaaa/pb/v3"
 )
 
 var (
-	// ErrInputPathRequired is returned when input path is not provided.
-	ErrInputPathRequired = errors.New("input path is required")
-	// ErrOutputPathRequired is returned when output path is not provided.
-	ErrOutputPathRequired = errors.New("output path is required")
 	// ErrPDFZeroOrNegativePages is returned when a PDF has invalid page count.
 	ErrPDFZeroOrNegativePages = errors.New(
 		"pdf has zero or a negative number of pages",
 	)
+	// ErrPageNumberMustBePositive is returned when a page number is zero or negative.
+	ErrPageNumberMustBePositive = errors.New("page number must be positive")
+	// ErrCouldNotParsePagesLine is returned when pdfinfo output cannot be parsed.
+	ErrCouldNotParsePagesLine = errors.New(
+		"could not parse 'Pages:' line from pdfinfo output",
+	)
 )
 
 // Options holds all configurable parameters for a Processor.
-// This struct is used to initialize a new Processor with user-defined settings.
 type Options struct {
 	ProgressBarOutput      io.Writer
-	InputPath              string
-	OutputPath             string
-	ProjectRoot            string
+	InputPath              string // Kept for struct compatibility but unused in main path
+	OutputPath             string // Kept for struct compatibility but unused in main path
+	ProjectRoot            string // Kept for struct compatibility but unused in main path
 	DPI                    int
 	Workers                int
 	BlankFuzzPercent       int
@@ -41,20 +44,17 @@ type Options struct {
 
 // Processor encapsulates the logic for processing a batch of PDF files.
 type Processor struct {
-	executor CommandExecutor
-	log      *logger.Logger
-	config   Options
+	log    *logger.Logger
+	config Options
 }
 
-// NewProcessor creates and initializes a new Processor with the given options and logger.
-// It sets sensible defaults for any zero-value fields in the Options struct.
+// NewProcessor creates and initializes a new Processor.
 func NewProcessor(opts *Options, log *logger.Logger) *Processor {
 	applyDefaultOptions(opts)
 
 	return &Processor{
-		config:   *opts,
-		log:      log,
-		executor: &defaultExecutor{}, // Use the real command executor by default.
+		config: *opts,
+		log:    log,
 	}
 }
 
@@ -83,7 +83,6 @@ func defaultIntNonPositive(v, def int) int {
 	if v <= 0 {
 		return def
 	}
-
 	return v
 }
 
@@ -91,7 +90,6 @@ func defaultFloatNonPositive(v, def float64) float64 {
 	if v <= 0 {
 		return def
 	}
-
 	return v
 }
 
@@ -99,168 +97,11 @@ func defaultWriterNil(w, def io.Writer) io.Writer {
 	if w == nil {
 		return def
 	}
-
 	return w
 }
 
-// Process is the main entry point for starting the PDF-to-PNG conversion job.
-// It discovers PDFs, builds the helper binary, and processes each file sequentially.
-func (processor *Processor) Process(ctx context.Context) error {
-	// Step 1: Validate the configuration before starting any work.
-	err := processor.validateConfig()
-	if err != nil {
-		return err
-	}
-
-	// Step 2: Prepare helper tooling required for processing.
-	err = processor.prepareTools(ctx)
-	if err != nil {
-		return err
-	}
-
-	// Step 3: Discover all PDF files in the input directory.
-	pdfPaths, err := processor.discoverInputPDFs()
-	if err != nil {
-		return err
-	}
-
-	// Step 4: Process each discovered PDF file.
-	processor.log.Infof(fmt.Sprintf("Found %d PDF(s) to process.", len(pdfPaths)))
-
-	return processor.processAllPDFs(ctx, pdfPaths)
-}
-
-// ProcessSinglePDF converts a single PDF file to PNGs using the processor's configuration.
-// It returns the directory where the PNG files were written.
-func (processor *Processor) ProcessSinglePDF(ctx context.Context, pdfPath string) (string, error) {
-	if processor.config.OutputPath == "" {
-		return "", ErrOutputPathRequired
-	}
-
-	err := processor.prepareTools(ctx)
-	if err != nil {
-		return "", err
-	}
-
-	return processor.processOnePDF(ctx, pdfPath)
-}
-
-// ProcessSinglePDFFromBytes converts a single PDF file from a byte slice to PNGs using the processor's configuration.
-// It returns the PNGs as a slice of byte slices.
+// ProcessSinglePDFFromBytes converts a single PDF file from a byte slice to PNGs.
 func (processor *Processor) ProcessSinglePDFFromBytes(ctx context.Context, pdfData []byte) ([][]byte, error) {
-	err := processor.prepareTools(ctx)
-	if err != nil {
-		return nil, err
-	}
-
-	return processor.processOnePDFFromBytes(ctx, pdfData)
-}
-
-// prepareTools ensures required helper binaries are available before processing.
-func (processor *Processor) prepareTools(ctx context.Context) error {
-	buildErr := ensureDetectBlankBinary(
-		ctx,
-		processor.config.ProjectRoot,
-		processor.log,
-	)
-	if buildErr != nil {
-		return fmt.Errorf("could not prepare blank detection tool: %w", buildErr)
-	}
-
-	return nil
-}
-
-// discoverInputPDFs discovers input PDFs and validates non-empty result.
-func (processor *Processor) discoverInputPDFs() ([]string, error) {
-	pdfPaths, discoveryErr := DiscoverPDFs(processor.config.InputPath)
-	if discoveryErr != nil {
-		return nil, fmt.Errorf("failed to discover PDFs: %w", discoveryErr)
-	}
-
-	if len(pdfPaths) == 0 {
-		return nil, fmt.Errorf(
-			"no PDF files found in %s: %w",
-			processor.config.InputPath,
-			os.ErrNotExist,
-		)
-	}
-
-	return pdfPaths, nil
-}
-
-// validateConfig checks if the essential configuration options have been provided.
-func (processor *Processor) validateConfig() error {
-	if processor.config.InputPath == "" {
-		return ErrInputPathRequired
-	}
-
-	if processor.config.OutputPath == "" {
-		return ErrOutputPathRequired
-	}
-
-	return nil
-}
-
-// processAllPDFs iterates through a list of PDF file paths and processes each one.
-// It uses a progress bar to show the overall progress.
-func (processor *Processor) processAllPDFs(ctx context.Context, pdfPaths []string) error {
-	mainProgressBar := pb.New(len(pdfPaths)).
-		SetTemplateString(`{{ bar . " " "━" "━" " " " "}} {{percent .}} {{rtime .}}`).
-		SetWriter(processor.config.ProgressBarOutput).
-		Start()
-	defer mainProgressBar.Finish()
-
-	for _, pdfPath := range pdfPaths {
-		mainProgressBar.Increment()
-		processor.log.Infof("Starting processing for: " + filepath.Base(pdfPath))
-
-		_, processErr := processor.processOnePDF(ctx, pdfPath)
-		if processErr != nil {
-			processor.log.Errorf(
-				fmt.Sprintf("Failed to process %s: %v", filepath.Base(pdfPath), processErr),
-			)
-			// Continue to the next file even if one fails.
-		} else {
-			processor.log.Successf("Successfully processed " + filepath.Base(pdfPath))
-		}
-	}
-
-	return nil
-}
-
-// processOnePDF handles the conversion of a single PDF file.
-func (processor *Processor) processOnePDF(ctx context.Context, pdfPath string) (string, error) {
-	// Determine the total number of pages in the PDF.
-	pageCount, pageCountErr := processor.getPDFPages(ctx, pdfPath)
-	if pageCountErr != nil {
-		return "", fmt.Errorf("could not get page count: %w", pageCountErr)
-	}
-
-	if pageCount <= 0 {
-		return "", ErrPDFZeroOrNegativePages
-	}
-
-	// Create the specific output directory for this PDF's PNGs.
-	outputDir, setupErr := setupOutputDirectory(processor.config.OutputPath, pdfPath)
-	if setupErr != nil {
-		return "", fmt.Errorf("could not set up output directory: %w", setupErr)
-	}
-
-	processor.log.Infof(fmt.Sprintf("Rendering %d pages into %s", pageCount, outputDir))
-
-	// Create and run a PageProcessor to handle the concurrent rendering.
-	pageProc := newPageProcessor(processor, outputDir)
-
-	processErr := pageProc.processPages(ctx, pdfPath, pageCount)
-	if processErr != nil {
-		return "", processErr
-	}
-
-	return outputDir, nil
-}
-
-// processOnePDFFromBytes handles the conversion of a single PDF file from a byte slice.
-func (processor *Processor) processOnePDFFromBytes(ctx context.Context, pdfData []byte) ([][]byte, error) {
 	// Determine the total number of pages in the PDF.
 	pageCount, pageCountErr := processor.getPDFPagesFromBytes(ctx, pdfData)
 	if pageCountErr != nil {
@@ -282,4 +123,88 @@ func (processor *Processor) processOnePDFFromBytes(ctx context.Context, pdfData 
 	}
 
 	return pngs, nil
+}
+
+// getPDFPagesFromBytes executes the `pdfinfo` command to determine the number of pages.
+func (processor *Processor) getPDFPagesFromBytes(
+	ctx context.Context,
+	pdfData []byte,
+) (int, error) {
+	cmd := exec.CommandContext(ctx, "pdfinfo", "-")
+	cmd.Stdin = bytes.NewReader(pdfData)
+
+	outputBytes, execErr := cmd.CombinedOutput()
+	if execErr != nil {
+		return 0, fmt.Errorf(
+			"pdfinfo execution failed: %w. Output: %s",
+			execErr,
+			string(outputBytes),
+		)
+	}
+
+	return parsePdfInfoOutput(string(outputBytes))
+}
+
+// parsePdfInfoOutput scans the text output from the `pdfinfo` command.
+func parsePdfInfoOutput(output string) (int, error) {
+	scanner := bufio.NewScanner(strings.NewReader(output))
+	for scanner.Scan() {
+		text := scanner.Text()
+		if strings.HasPrefix(text, "Pages:") {
+			parts := strings.Fields(text)
+			if len(parts) < 2 {
+				return 0, ErrCouldNotParsePagesLine
+			}
+			pageCount, err := strconv.Atoi(parts[1])
+			if err != nil {
+				return 0, ErrCouldNotParsePagesLine
+			}
+			return pageCount, nil
+		}
+	}
+
+	return 0, ErrCouldNotParsePagesLine
+}
+
+// renderPageFromBytes executes the Ghostscript command to convert a single PDF page.
+func (processor *Processor) renderPageFromBytes(
+	ctx context.Context,
+	pdfData []byte,
+	page int,
+) ([]byte, error) {
+	if page <= 0 {
+		return nil, ErrPageNumberMustBePositive
+	}
+
+	args := []string{
+		"-q", "-dNOPAUSE", "-dBATCH",
+		"-sDEVICE=png16m",
+		fmt.Sprintf("-r%d", processor.config.DPI),
+		fmt.Sprintf("-dFirstPage=%d", page),
+		fmt.Sprintf("-dLastPage=%d", page),
+		"-o", "-", // stdout
+		"-dTextAlphaBits=4",
+		"-dGraphicsAlphaBits=4",
+		"-dDownScaleFactor=1",
+		"-dPDFFitPage",
+		"-", // stdin
+	}
+
+	cmd := exec.CommandContext(ctx, "ghostscript", args...)
+	cmd.Stdin = bytes.NewReader(pdfData)
+
+	output, err := cmd.Output()
+	if err != nil {
+		var exitErr *exec.ExitError
+		if errors.As(err, &exitErr) {
+			return nil, fmt.Errorf(
+				"ghostscript execution failed: %w. Stderr: %s",
+				err,
+				string(exitErr.Stderr),
+			)
+		}
+		return nil, fmt.Errorf("ghostscript execution failed: %w", err)
+	}
+
+	return output, nil
 }
