@@ -5,13 +5,13 @@ This service is the **entry point** of the processing pipeline. It accepts PDF f
 
 ## Architecture & Data Flow
 1.  **Input**: Listens to NATS JetStream subject `pdfs.created`.
-    -   Payload: JSON event containing `pdf_object_key`.
+    -   Payload: JSON event containing `pdf_object_key` and **JobSettings** (Style, Voice, Language).
 2.  **Processing**:
     -   Downloads the PDF from the Object Store.
     -   Renders each page as a PNG image.
     -   Uploads each PNG to the Object Store (`png_bucket`).
 3.  **Output**: Publishes events to `pngs.created`.
-    -   Payload: `PNGCreatedEvent` (contains `png_object_key`, `page_number`, `workflow_id`).
+    -   Payload: `PNGCreatedEvent` (propagates **JobSettings** to downstream services).
 
 ## Configuration
 -   **Config File**: `project.toml`
@@ -20,4 +20,4 @@ This service is the **entry point** of the processing pipeline. It accepts PDF f
 ## Current Status (Dec 12, 2025)
 -   **Health**: ✅ Healthy
 -   **Performance**: High.
--   **Dependencies**: `mupdf` (or similar rendering lib), NATS.
+-   **Updates**: Supports passing rich job settings (Voice, Language, Style) through the pipeline.

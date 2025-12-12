@@ -16,6 +16,8 @@ type JobSettings struct {
 	StyleProfile       string   `json:"style_profile,omitempty"`
 	CustomInstructions string   `json:"custom_instructions,omitempty"`
 	Exclusions         []string `json:"exclusions,omitempty"`
+	Voice              string   `json:"voice,omitempty"`
+	Language           string   `json:"language,omitempty"`
 }
 
 // PDFCreatedEvent is triggered when a PDF is uploaded.
