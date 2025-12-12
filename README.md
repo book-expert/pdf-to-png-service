@@ -73,27 +73,17 @@ make run
 go run cmd/main.go
 ```
 
-## Testing
+## Development
 
-### Integration Test
+To build the service:
+```bash
+make build
+```
 
-Since the service relies heavily on NATS and external tools, an integration test script is provided to verify the full flow (upload -> process -> result).
-
-1.  Start the service in one terminal:
-    ```bash
-    make run
-    ```
-
-2.  Run the test script in another terminal:
-    ```bash
-    ./test_integration.sh
-    ```
-
-The script will:
-1.  Connect to your NATS server.
-2.  Upload a test PDF.
-3.  Trigger the service.
-4.  Download the generated PNGs to an `./output` directory for verification.
+To run linting:
+```bash
+make lint
+```
 
 ## License
 
