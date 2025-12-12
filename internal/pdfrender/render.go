@@ -17,17 +17,24 @@ import (
 	"github.com/book-expert/logger"
 )
 
+// Define command constants to avoid magic strings and allow easy updates.
+const (
+	CommandPDFInfo     = "pdfinfo"
+	CommandGhostScript = "ghostscript"
+
+	// Default configuration values.
+	DefaultDPI                    = 200
+	DefaultBlankFuzzPercent       = 5
+	DefaultBlankNonWhiteThreshold = 0.005
+)
+
 var (
 	// ErrPDFZeroOrNegativePages is returned when a PDF has invalid page count.
-	ErrPDFZeroOrNegativePages = errors.New(
-		"pdf has zero or a negative number of pages",
-	)
+	ErrPDFZeroOrNegativePages = errors.New("pdf has zero or a negative number of pages")
 	// ErrPageNumberMustBePositive is returned when a page number is zero or negative.
 	ErrPageNumberMustBePositive = errors.New("page number must be positive")
 	// ErrCouldNotParsePagesLine is returned when pdfinfo output cannot be parsed.
-	ErrCouldNotParsePagesLine = errors.New(
-		"could not parse 'Pages:' line from pdfinfo output",
-	)
+	ErrCouldNotParsePagesLine = errors.New("could not parse 'Pages:' line from pdfinfo output")
 )
 
 // Options holds all configurable parameters for a Processor.
@@ -48,64 +55,62 @@ type Processor struct {
 	config Options
 }
 
-// NewProcessor creates and initializes a new Processor.
-func NewProcessor(opts *Options, log *logger.Logger) *Processor {
-	applyDefaultOptions(opts)
+// NewProcessor creates and initializes a new Processor with validated options.
+func NewProcessor(options *Options, log *logger.Logger) *Processor {
+	applyDefaultConfiguration(options)
 
 	return &Processor{
-		config: *opts,
+		config: *options,
 		log:    log,
 	}
 }
 
-const (
-	defaultDPI                    = 200
-	defaultBlankFuzzPercent       = 5
-	defaultBlankNonWhiteThreshold = 0.005
-)
+// applyDefaultConfiguration fills zero-value fields in Options with sensible defaults.
+//
+// Why: Ensures the processor always runs with valid parameters without forcing the caller to set everything.
+func applyDefaultConfiguration(options *Options) {
+	options.DPI = resolvePositiveInteger(options.DPI, DefaultDPI)
+	options.Workers = resolvePositiveInteger(options.Workers, runtime.NumCPU())
 
-// applyDefaultOptions fills zero-value fields in Options with sensible defaults.
-func applyDefaultOptions(opts *Options) {
-	opts.DPI = defaultIntNonPositive(opts.DPI, defaultDPI)
-	opts.Workers = defaultIntNonPositive(opts.Workers, runtime.NumCPU())
-	opts.BlankFuzzPercent = defaultIntNonPositive(
-		opts.BlankFuzzPercent,
-		defaultBlankFuzzPercent,
+	options.BlankFuzzPercent = resolvePositiveInteger(
+		options.BlankFuzzPercent,
+		DefaultBlankFuzzPercent,
 	)
-	opts.BlankNonWhiteThreshold = defaultFloatNonPositive(
-		opts.BlankNonWhiteThreshold,
-		defaultBlankNonWhiteThreshold,
+
+	options.BlankNonWhiteThreshold = resolvePositiveFloat(
+		options.BlankNonWhiteThreshold,
+		DefaultBlankNonWhiteThreshold,
 	)
-	opts.ProgressBarOutput = defaultWriterNil(opts.ProgressBarOutput, os.Stdout)
+
+	if options.ProgressBarOutput == nil {
+		options.ProgressBarOutput = os.Stdout
+	}
 }
 
-func defaultIntNonPositive(v, def int) int {
-	if v <= 0 {
-		return def
+// resolvePositiveInteger returns the default value if the provided value is non-positive.
+func resolvePositiveInteger(value, defaultValue int) int {
+	if value <= 0 {
+		return defaultValue
 	}
-	return v
+	return value
 }
 
-func defaultFloatNonPositive(v, def float64) float64 {
-	if v <= 0 {
-		return def
+// resolvePositiveFloat returns the default value if the provided value is non-positive.
+func resolvePositiveFloat(value, defaultValue float64) float64 {
+	if value <= 0 {
+		return defaultValue
 	}
-	return v
-}
-
-func defaultWriterNil(w, def io.Writer) io.Writer {
-	if w == nil {
-		return def
-	}
-	return w
+	return value
 }
 
 // ProcessSinglePDFFromBytes converts a single PDF file from a byte slice to PNGs.
+//
+// Flow: Get Page Count -> Initialize PageProcessor -> Execute Batch -> Return Images
 func (processor *Processor) ProcessSinglePDFFromBytes(ctx context.Context, pdfData []byte) ([][]byte, error) {
-	// Determine the total number of pages in the PDF.
-	pageCount, pageCountErr := processor.getPDFPagesFromBytes(ctx, pdfData)
-	if pageCountErr != nil {
-		return nil, fmt.Errorf("could not get page count: %w", pageCountErr)
+	// Step 1: Determine the total number of pages in the PDF.
+	pageCount, err := processor.getPDFPageCount(ctx, pdfData)
+	if err != nil {
+		return nil, fmt.Errorf("could not get page count: %w", err)
 	}
 
 	if pageCount <= 0 {
@@ -114,48 +119,51 @@ func (processor *Processor) ProcessSinglePDFFromBytes(ctx context.Context, pdfDa
 
 	processor.log.Infof(fmt.Sprintf("Rendering %d pages", pageCount))
 
-	// Create and run a PageProcessor to handle the concurrent rendering.
-	pageProc := newPageProcessor(processor, "")
+	// Step 2: Delegate to PageProcessor for concurrent rendering.
+	// Note: We use the exported NewPageProcessor and ProcessPagesFromBytes from the previous refactor.
+	pageProcessor := NewPageProcessor(processor, "")
 
-	pngs, processErr := pageProc.processPagesFromBytes(ctx, pdfData, pageCount)
-	if processErr != nil {
-		return nil, processErr
+	pngImages, err := pageProcessor.ProcessPagesFromBytes(ctx, pdfData, pageCount)
+	if err != nil {
+		return nil, err
 	}
 
-	return pngs, nil
+	return pngImages, nil
 }
 
-// getPDFPagesFromBytes executes the `pdfinfo` command to determine the number of pages.
-func (processor *Processor) getPDFPagesFromBytes(
-	ctx context.Context,
-	pdfData []byte,
-) (int, error) {
-	cmd := exec.CommandContext(ctx, "pdfinfo", "-")
-	cmd.Stdin = bytes.NewReader(pdfData)
+// getPDFPageCount executes the `pdfinfo` command to determine the number of pages.
+func (processor *Processor) getPDFPageCount(ctx context.Context, pdfData []byte) (int, error) {
+	pdfInfoCommand := exec.CommandContext(ctx, CommandPDFInfo, "-")
+	pdfInfoCommand.Stdin = bytes.NewReader(pdfData)
 
-	outputBytes, execErr := cmd.CombinedOutput()
-	if execErr != nil {
+	commandOutput, err := pdfInfoCommand.CombinedOutput()
+	if err != nil {
 		return 0, fmt.Errorf(
 			"pdfinfo execution failed: %w. Output: %s",
-			execErr,
-			string(outputBytes),
+			err,
+			string(commandOutput),
 		)
 	}
 
-	return parsePdfInfoOutput(string(outputBytes))
+	return parsePdfInfoOutput(string(commandOutput))
 }
 
 // parsePdfInfoOutput scans the text output from the `pdfinfo` command.
+//
+// Why: `pdfinfo` format is line-based. Scanning line-by-line is more robust than regex.
 func parsePdfInfoOutput(output string) (int, error) {
-	scanner := bufio.NewScanner(strings.NewReader(output))
-	for scanner.Scan() {
-		text := scanner.Text()
-		if strings.HasPrefix(text, "Pages:") {
-			parts := strings.Fields(text)
-			if len(parts) < 2 {
+	outputScanner := bufio.NewScanner(strings.NewReader(output))
+
+	for outputScanner.Scan() {
+		lineText := outputScanner.Text()
+
+		if strings.HasPrefix(lineText, "Pages:") {
+			lineParts := strings.Fields(lineText)
+			if len(lineParts) < 2 {
 				return 0, ErrCouldNotParsePagesLine
 			}
-			pageCount, err := strconv.Atoi(parts[1])
+
+			pageCount, err := strconv.Atoi(lineParts[1])
 			if err != nil {
 				return 0, ErrCouldNotParsePagesLine
 			}
@@ -167,33 +175,33 @@ func parsePdfInfoOutput(output string) (int, error) {
 }
 
 // renderPageFromBytes executes the Ghostscript command to convert a single PDF page.
-func (processor *Processor) renderPageFromBytes(
-	ctx context.Context,
-	pdfData []byte,
-	page int,
-) ([]byte, error) {
-	if page <= 0 {
+//
+// Why: Ghostscript provides the most reliable headless rendering for PDFs.
+func (processor *Processor) renderPageFromBytes(ctx context.Context, pdfData []byte, pageNumber int) ([]byte, error) {
+	if pageNumber <= 0 {
 		return nil, ErrPageNumberMustBePositive
 	}
 
-	args := []string{
+	//
+	// Arguments are constructed to output a single page to stdout ("-") as a PNG.
+	commandArguments := []string{
 		"-q", "-dNOPAUSE", "-dBATCH",
 		"-sDEVICE=png16m",
 		fmt.Sprintf("-r%d", processor.config.DPI),
-		fmt.Sprintf("-dFirstPage=%d", page),
-		fmt.Sprintf("-dLastPage=%d", page),
-		"-o", "-", // stdout
+		fmt.Sprintf("-dFirstPage=%d", pageNumber),
+		fmt.Sprintf("-dLastPage=%d", pageNumber),
+		"-o", "-", // Output to stdout
 		"-dTextAlphaBits=4",
 		"-dGraphicsAlphaBits=4",
 		"-dDownScaleFactor=1",
 		"-dPDFFitPage",
-		"-", // stdin
+		"-", // Read from stdin
 	}
 
-	cmd := exec.CommandContext(ctx, "ghostscript", args...)
-	cmd.Stdin = bytes.NewReader(pdfData)
+	ghostScriptCommand := exec.CommandContext(ctx, CommandGhostScript, commandArguments...)
+	ghostScriptCommand.Stdin = bytes.NewReader(pdfData)
 
-	output, err := cmd.Output()
+	outputData, err := ghostScriptCommand.Output()
 	if err != nil {
 		var exitErr *exec.ExitError
 		if errors.As(err, &exitErr) {
@@ -206,5 +214,5 @@ func (processor *Processor) renderPageFromBytes(
 		return nil, fmt.Errorf("ghostscript execution failed: %w", err)
 	}
 
-	return output, nil
+	return outputData, nil
 }

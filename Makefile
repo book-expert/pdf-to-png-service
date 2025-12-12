@@ -4,7 +4,6 @@
 
 # Build configuration
 BINARY := pdf-to-png-service
-BUILD_DIR := bin
 INSTALL_DIR := $(HOME)/bin
 
 # Go build flags
@@ -17,21 +16,20 @@ all: build test lint
 # Build the service
 build:
 	@echo "Building $(BINARY)..."
-	@mkdir -p $(INSTALL_DIR)
-	go build -o $(INSTALL_DIR)/$(BINARY) ./cmd
+	go build -o ./$(BINARY) ./cmd
 
 # Install binary to ~/bin
 install: build
 	@echo "Installing $(BINARY) to $(INSTALL_DIR)..."
 	@mkdir -p $(INSTALL_DIR)
-	cp $(BUILD_DIR)/$(BINARY) $(INSTALL_DIR)/$(BINARY)
+	cp ./$(BINARY) $(INSTALL_DIR)/$(BINARY)
 	@echo "✅ $(BINARY) installed to $(INSTALL_DIR)/$(BINARY)"
 	@echo "Make sure $(INSTALL_DIR) is in your PATH"
 
 # Clean build artifacts
 clean:
 	@echo "Cleaning build artifacts..."
-	rm -rf $(BUILD_DIR)
+	rm -f ./$(BINARY)
 	rm -f logs/*.log
 
 # Run tests
@@ -58,7 +56,7 @@ fmt:
 # Show help
 help:
 	@echo "Available targets:"
-	@echo "  build   - Build the PDF-to-PNG service"
+	@echo "  build   - Build the PDF-to-PNG service into project root"
 	@echo "  install - Install service binary to ~/bin"
 	@echo "  clean   - Clean build artifacts"
 	@echo "  test    - Run tests"

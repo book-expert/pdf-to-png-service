@@ -13,8 +13,8 @@ import (
 	"syscall"
 	"time"
 
-	"github.com/book-expert/events"
 	"github.com/book-expert/logger"
+	"github.com/book-expert/pdf-to-png-service/internal/events"
 	"github.com/book-expert/pdf-to-png-service/internal/pdfrender"
 	"github.com/google/uuid"
 	"github.com/nats-io/nats.go"
@@ -363,10 +363,9 @@ func (j *job) publishPNGs(ctx context.Context) error {
 				EventID:    uuid.New().String(),
 				Timestamp:  time.Now(),
 			},
-			PNGKey:       pngKey,
-			PageNumber:   i + 1,
-			TotalPages:   totalPages,
-			Augmentation: j.event.Augmentation,
+			PNGKey:     pngKey,
+			PageNumber: i + 1,
+			TotalPages: totalPages,
 		}
 
 		data, _ := json.Marshal(event)
