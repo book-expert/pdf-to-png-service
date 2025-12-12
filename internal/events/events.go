@@ -11,10 +11,18 @@ type EventHeader struct {
 	EventID    string    `json:"event_id"`
 }
 
+type JobSettings struct {
+	TranscriptionMode  string   `json:"transcription_mode,omitempty"`
+	StyleProfile       string   `json:"style_profile,omitempty"`
+	CustomInstructions string   `json:"custom_instructions,omitempty"`
+	Exclusions         []string `json:"exclusions,omitempty"`
+}
+
 // PDFCreatedEvent is triggered when a PDF is uploaded.
 type PDFCreatedEvent struct {
-	Header EventHeader `json:"header"`
-	PDFKey string      `json:"pdf_key"`
+	Header   EventHeader `json:"header"`
+	PDFKey   string      `json:"pdf_key"`
+	Settings JobSettings `json:"settings,omitempty"`
 }
 
 // PNGCreatedEvent is triggered when a PNG page is generated from a PDF.
@@ -23,4 +31,5 @@ type PNGCreatedEvent struct {
 	PNGKey     string      `json:"png_key"`
 	PageNumber int         `json:"page_number"`
 	TotalPages int         `json:"total_pages"`
+	Settings   JobSettings `json:"settings,omitempty"`
 }

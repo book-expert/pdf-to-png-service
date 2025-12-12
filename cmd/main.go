@@ -366,6 +366,7 @@ func (j *job) publishPNGs(ctx context.Context) error {
 			PNGKey:     pngKey,
 			PageNumber: i + 1,
 			TotalPages: totalPages,
+			Settings:   j.event.Settings,
 		}
 
 		data, _ := json.Marshal(event)
