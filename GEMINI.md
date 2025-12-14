@@ -5,28 +5,28 @@ This service is the **entry point** of the processing pipeline. It accepts PDF f
 
 ## Architecture & Data Flow
 1.  **Input**: Listens to NATS JetStream subject `pdfs.created`.
-    -   Payload: JSON event containing `pdf_object_key` and **JobSettings** (Style, Voice, Language, etc.).
+    -   Payload: JSON event containing `pdf_object_key` and **JobSettings** (`Scene`, `Style`, `Accent`, `Articulation`, `Pace`, `Personality`).
 2.  **Processing**:
-    -   Downloads the PDF from the Object Store (`PDF_FILES`).
-    -   **Blank Detection**: Scans pages for content. Skips blank pages.
-    -   **Rendering**: Uses Ghostscript to render each page as a high-quality PNG.
-    -   Uploads each PNG to the Object Store (`PNG_FILES`).
+    -   Downloads the PDF.
+    -   **The Brain**: Calls Gemini to analyze the PDF + User Settings and generate a **Master Narration Directive** (Markdown).
+    -   **Rendering**: Renders pages as PNGs (skipping blank ones).
 3.  **Output**: Publishes events to `pngs.created`.
-    -   Payload: `PNGCreatedEvent` (propagates **JobSettings** to downstream services).
+    -   Payload: `PNGCreatedEvent` carrying the `MasterDirective` (AudioSessionConfig) and `JobSettings` to downstream services.
 
 ## Configuration
 -   **Config File**: `project.toml`
 -   **Key Settings**:
-    -   `workers`: Parallel processing count (Default: 4).
+    -   `analysis_prompt`: The template for generating the Master Directive.
+    -   `workers`: Parallel processing count.
     -   `dpi`: Rendering resolution (Default: 300).
-    -   `blank_fuzz_percent`: Sensitivity for blank page detection.
 
 ## Dependencies
 -   **System Tools**: `ghostscript`, `pdfinfo` (poppler-utils).
--   **Infrastructure**: NATS JetStream (Messaging & Object Store).
+-   **Infrastructure**: NATS JetStream.
 
-## Current Status (Dec 12, 2025)
+## Current Status (Dec 13, 2025)
 -   **Health**: ✅ Healthy
 -   **Features**:
-    -   **Settings Propagation**: Successfully passes `JobSettings` (Voice, Style, Language) to downstream events.
-    -   **Robustness**: Handles blank pages and rendering errors gracefully.
+    -   **Master Directive**: Generates a persistent "Director Mode" context for the entire book.
+    -   **Settings Propagation**: Passes user intent (`Style`, `Pace`, etc.) correctly.
+    -   **Robustness**: Handles blank pages and rendering errors.

@@ -12,6 +12,7 @@ This service is a key component in the document processing pipeline, enabling su
 
 Core capabilities include:
 
+-   **The "Brain" (LLM Integration)**: Analyzes the PDF content and user preferences (Style, Pace, etc.) using Gemini to generate a persistent "Master Narration Directive" that guides the tone of the entire audiobook.
 -   **NATS Integration**: Seamlessly integrates with NATS for messaging and object storage.
 -   **Concurrent Processing**: Utilizes concurrent workers to accelerate the conversion process.
 -   **High-Quality Rendering**: Renders each PDF page as a PNG image with configurable DPI using Ghostscript.

@@ -1,9 +1,61 @@
 [service]
 log_dir = "./logs"
-workers = 4
+workers = 1
 dpi = 300
 blank_fuzz_percent = 5
 blank_non_white_threshold = 0.005
+
+[llm]
+api_key_variable = "GEMINI_API_KEY"
+model = "gemini-2.5-flash-lite"
+max_retries = 3
+timeout_seconds = 60
+temperature = 0.5
+analysis_prompt = """
+Analyze the attached PDF document to create a "Master Narration Directive" for an audiobook adaptation.
+
+Context:
+This directive will guide a Text-to-Speech system to generate a deeply personalized and context-aware audiobook.
+
+Input Parameters:
+- Scene: {{.Scene}}
+- Style: {{.Style}}
+- Accent: {{.Accent}}
+- Articulation: {{.Articulation}}
+- Pace: {{.Pace}}
+- Personality: {{.Personality}}
+- Exclusions: {{.Exclusions}}
+
+Task:
+1.  **Analyze Content:** Determine the document's genre, complexity, and inherent tone.
+2.  **Integrate Preferences:** Combine the document's inherent nature with the user's requested parameters.
+3.  **Context Awareness:** Understand that this "Master Narration Directive" will be prepended to the text of **EVERY** individual page sent to the TTS engine. It must provide a consistent, cohesive character and setting that works across disjointed page chunks.
+4.  **Universal Directives:** Add specific guidance for structural anomalies. For example, "If a page is a Table of Contents, read only the chapter titles and ignore page numbers." or "If a page is a bibliography, skip it." Ensure these rules are universal and robust.
+5.  **Generate Configuration:** Return a Markdown such as:
+
+
+## THE SCENE:
+< Here you augument and improve the scene to generate unique setting for the listener> 
+
+### DIRECTOR'S NOTES
+Style: <Create a style based on the listener> 
+Example:
+* The "Vocal Smile": You must hear the grin in the audio. The soft palate is
+always raised to keep the tone bright, sunny, and explicitly inviting.
+* Dynamics: High projection without shouting. Punchy consonants and elongated
+vowels on excitement words (e.g., "Beauuutiful morning").
+
+Pace: Speaks at an energetic pace, keeping up with the fast music.  Speaks
+with A "bouncing" cadence. High-speed delivery with fluid transitions — no dead
+air, no gaps.
+
+Accent:
+
+Personality:
+
+Articulation:
+
+"""
 
 [nats]
 url = "nats://192.168.122.102:4222"

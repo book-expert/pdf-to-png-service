@@ -16,7 +16,7 @@ all: build test lint
 # Build the service
 build:
 	@echo "Building $(BINARY)..."
-	go build -o ./$(BINARY) ./cmd
+	go build -o ./$(BINARY) ./cmd/pdf-to-png-service
 
 # Install binary to ~/bin
 install: build
@@ -39,7 +39,7 @@ test:
 
 # Run linter
 lint:
-	@echo "Running golangci-lint..."
+	@echo "Running golangci-lint run --fix..."
 	@gofumpt -l -w .
 	@golangci-lint run --fix
 	@go vet ./...
