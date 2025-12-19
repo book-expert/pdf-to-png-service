@@ -3,15 +3,15 @@ package analyzer
 import (
 	"bytes"
 	"context"
+	"encoding/json"
 	"fmt"
 	"html/template"
 	"io"
 	"os"
+	"strings"
 	"time"
 
 	"github.com/book-expert/logger"
-	"github.com/book-expert/pdf-to-png-service/internal/events"
-	"github.com/google/uuid"
 	"google.golang.org/genai"
 )
 
@@ -20,6 +20,7 @@ type Config struct {
 	Model          string
 	AnalysisPrompt string
 	Timeout        time.Duration
+	Voices         map[string]string
 }
 
 type Analyzer struct {
@@ -44,16 +45,20 @@ func New(ctx context.Context, cfg Config, logger *logger.Logger) (*Analyzer, err
 }
 
 type AnalysisInput struct {
-	Scene        string
-	Style        string
-	Accent       string
-	Articulation string
-	Pace         string
-	Personality  string
-	Exclusions   string
+	SoundscapePrompt string
+	Exclusions       string
+	VoiceStyle       string
+	VoiceName        string
+	VoiceTrait       string
 }
 
-func (a *Analyzer) AnalyzePDF(ctx context.Context, pdfData []byte, input AnalysisInput) (*events.AudioSessionConfig, error) {
+type AnalysisResponse struct {
+	TextDirective string `json:"text_directive"`
+
+	MusicPrompt string `json:"music_prompt"`
+}
+
+func (a *Analyzer) AnalyzePDF(ctx context.Context, pdfData []byte, input AnalysisInput) (*AnalysisResponse, error) {
 	// 1. Write PDF to temp file for upload
 	tmpFile, err := os.CreateTemp("", "analyze-*.pdf")
 	if err != nil {
@@ -101,12 +106,6 @@ func (a *Analyzer) AnalyzePDF(ctx context.Context, pdfData []byte, input Analysi
 		}
 	}()
 
-	// Wait for file to be active (processing)
-	// For PDFs, it might take a moment.
-	// Ideally we poll GetFile until State is ACTIVE.
-	// For simplicity in this iteration, we assume it's ready or will be handled by GenerateContent waiting.
-	// (Note: GenAI Go SDK's GenerateContent often handles waiting implicitly or returns error if not ready)
-
 	// 3. Prepare Prompt
 	tmpl, err := template.New("prompt").Parse(a.cfg.AnalysisPrompt)
 	if err != nil {
@@ -118,7 +117,7 @@ func (a *Analyzer) AnalyzePDF(ctx context.Context, pdfData []byte, input Analysi
 		return nil, fmt.Errorf("execute prompt template: %w", err)
 	}
 
-	// 4. Call Generate Content
+	// 4. Call Generate Content (JSON Enforced)
 	promptText := promptBuf.String()
 	resp, err := a.client.Models.GenerateContent(
 		ctx,
@@ -138,7 +137,9 @@ func (a *Analyzer) AnalyzePDF(ctx context.Context, pdfData []byte, input Analysi
 				},
 			},
 		},
-		&genai.GenerateContentConfig{},
+		&genai.GenerateContentConfig{
+			ResponseMIMEType: "application/json",
+		},
 	)
 	if err != nil {
 		return nil, fmt.Errorf("generate content: %w", err)
@@ -154,11 +155,18 @@ func (a *Analyzer) AnalyzePDF(ctx context.Context, pdfData []byte, input Analysi
 		partText += part.Text
 	}
 
-	// Create config with raw Master Directive
-	config := events.AudioSessionConfig{
-		SessionID:       uuid.New().String(),
-		MasterDirective: partText,
+	// Clean markdown block if present (defensive)
+	partText = strings.TrimPrefix(partText, "```json")
+	partText = strings.TrimPrefix(partText, "```")
+	partText = strings.TrimSuffix(partText, "```")
+
+	a.logger.Infof("Raw Gemini Response: %s", partText)
+
+	var analysisResp AnalysisResponse
+	if err := json.Unmarshal([]byte(partText), &analysisResp); err != nil {
+		a.logger.Errorf("Failed to parse JSON response: %s", partText)
+		return nil, fmt.Errorf("parse json response: %w", err)
 	}
 
-	return &config, nil
+	return &analysisResp, nil
 }

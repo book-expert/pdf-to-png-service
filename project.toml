@@ -1,60 +1,70 @@
 [service]
-log_dir = "./logs"
-workers = 1
+log_dir = "/home/niko/development/logs/tts-logs"
+workers = 4
 dpi = 300
 blank_fuzz_percent = 5
 blank_non_white_threshold = 0.005
 
+[voices]
+niko = "Paced, Mature, Male"
+
 [llm]
 api_key_variable = "GEMINI_API_KEY"
-model = "gemini-2.5-flash-lite"
+model = "gemini-2.5-flash"
 max_retries = 3
 timeout_seconds = 60
 temperature = 0.5
 analysis_prompt = """
-Analyze the attached PDF document to create a "Master Narration Directive" for an audiobook adaptation.
+Analyze the attached PDF document to create a "Cinematic Production Directive".
 
-Context:
-This directive will guide a Text-to-Speech system to generate a deeply personalized and context-aware audiobook.
+You will be given a PDF document, along with user preferences for voice and music. Your task is to analyze the document's content and generate a JSON object containing two directives:
+1.  `text_directive`: Instructions for an OCR process to clean up the extracted text.
+2.  `music_prompt`: A high-quality, highly descriptive prompt for a music generation model (Lyria RealTime) that captures the mood of the document.
 
-Input Parameters:
-- Scene: {{.Scene}}
-- Style: {{.Style}}
-- Accent: {{.Accent}}
-- Articulation: {{.Articulation}}
-- Pace: {{.Pace}}
-- Personality: {{.Personality}}
-- Exclusions: {{.Exclusions}}
+**Input Data:**
+- **Narrator Voice:** The narrator will use the voice of '{{.VoiceName}}', which has a '{{.VoiceTrait}}' quality.
+- **User Music Request:** '{{.SoundscapePrompt}}'
+- **User Exclusions:** '{{.Exclusions}}'
 
-Task:
-1.  **Analyze Content:** Determine the document's genre, complexity, and inherent tone.
-2.  **Integrate Preferences:** Combine the document's inherent nature with the user's requested parameters.
-3.  **Context Awareness:** Understand that this "Master Narration Directive" will be prepended to the text of **EVERY** individual page sent to the TTS engine. It must provide a consistent, cohesive character and setting that works across disjointed page chunks.
-4.  **Universal Directives:** Add specific guidance for structural anomalies. For example, "If a page is a Table of Contents, read only the chapter titles and ignore page numbers." or "If a page is a bibliography, skip it." Ensure these rules are universal and robust.
-5.  **Generate Configuration:** Return a Markdown such as:
+**Task:**
 
+Create a strictly valid JSON object with the following structure:
 
-## THE SCENE:
-< Here you augument and improve the scene to generate unique setting for the listener> 
+```json
+{
+  "text_directive": "...",
+  "music_prompt": "..."
+}
+```
 
-### DIRECTOR'S NOTES
-Style: <Create a style based on the listener> 
-Example:
-* The "Vocal Smile": You must hear the grin in the audio. The soft palate is
-always raised to keep the tone bright, sunny, and explicitly inviting.
-* Dynamics: High projection without shouting. Punchy consonants and elongated
-vowels on excitement words (e.g., "Beauuutiful morning").
+**Detailed Requirements:**
 
-Pace: Speaks at an energetic pace, keeping up with the fast music.  Speaks
-with A "bouncing" cadence. High-speed delivery with fluid transitions — no dead
-air, no gaps.
+1.  **`text_directive`:**
+    -   Based on the user's exclusion request ('{{.Exclusions}}') and your analysis of the PDF structure (e.g., table of contents, headers, footers, references).
+    -   Create a concise set of rules for the next AI worker.
+    -   Example: "Strictly remove any table of contents, list of figures, and the bibliography section. Ignore all page numbers, headers, and footers. Remove any in-text citations that use square brackets or parentheses, such as [1] or (Author, 2021)."
 
-Accent:
+2.  **`music_prompt`:**
+    -   **If `SoundscapePrompt` is empty or says no music, return an empty string `""`.**
+    -   **Goal:** Create a detailed "soundtrack" description suitable for generating a 2-3 minute soundscape that loops or cuts as needed to fit the narration.
+    -   **Combine** the document's intrinsic mood with the user's `SoundscapePrompt`.
+    -   **Use Specific Terminology:** Incorporate specific instruments, genres, and mood descriptors to guide the AI.
+        -   *Instruments Examples:* Cello, Rhodes Piano, Moog Oscillations, Synth Pads, Hang Drum, Kalimba, Deep Bass, Woodwinds, Glassy Textures.
+        -   *Genre Examples:* Ambient, Downtempo, Neo-Classical, IDM, Cinematic Score, Drone, Lo-Fi, Space Ambient.
+        -   *Mood Examples:* Ethereal, Meditative, Unsettling, Tense, Wondrous, Melancholic, Industrial, Organic.
+    -   **Structure:**
+        -   Start with the **Genre/Vibe**: e.g., "Deep Space Ambient", "Dark Academia Classical".
+        -   Describe the **Instrumentation**: e.g., "featuring slow-swelling cello sections, interspersed with crystalline glockenspiel droplets and a warm, sub-bass drone."
+        -   Describe the **Texture/Atmosphere**: e.g., "The texture should be grainy and lo-fi, evoking the smell of old paper, with a gentle tape hiss."
+        -   **CRITICAL CONSTRAINTS:**
+            -   **NO VOCALS:** The music must be purely instrumental.
+            -   **NO SUDDEN PERCUSSION:** Avoid sharp drums or beats that would distract from the voice.
+            -   **LOW DYNAMIC RANGE:** The music should be a consistent "bed" of sound, not a dynamic song with peaks and valleys.
+            -   **LOOPABLE:** The composition should feel continuous.
 
-Personality:
+    -   *Example Output:* "Genre: Cinematic Ambient. Mood: Intellectual, Mysterious, Vast. Instrumentation: A wash of analog synth pads (Jupiter-8 style) creating a warm, evolving chord progression. Underneath, a deep, resonant cello plays a slow, mourning melody. Occasional subtle metallic twangs and tape echoes add a sense of ancient technology. Texture: Smooth, expansive, and reverb-heavy. No drums, no vocals. Suitable for a paced reading of a sci-fi novel."
 
-Articulation:
-
+**You MUST output a single, valid JSON object and nothing else.**
 """
 
 [nats]

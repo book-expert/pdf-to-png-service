@@ -1,6 +1,7 @@
 # Go build artifacts
 /build/
 /bin/
+pdf-to-png-service
 /.claude/
 
 # Logs
