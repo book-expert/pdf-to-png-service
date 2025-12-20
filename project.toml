@@ -22,7 +22,9 @@ You will be given a PDF document, along with user preferences for voice and musi
 2.  `music_prompt`: A high-quality, highly descriptive prompt for a music generation model (Lyria RealTime) that captures the mood of the document.
 
 **Input Data:**
-- **Narrator Voice:** The narrator will use the voice of '{{.VoiceName}}', which has a '{{.VoiceTrait}}' quality.
+- **Narrator Voice:** The narrator will use the voice of '{{.VoiceName}}'.
+    - **Base Traits:** {{.VoiceTrait}}
+    - **User-Defined Style:** {{.VoiceStyle}}
 - **User Music Request:** '{{.SoundscapePrompt}}'
 - **User Exclusions:** '{{.Exclusions}}'
 

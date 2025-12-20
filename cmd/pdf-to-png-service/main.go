@@ -389,14 +389,21 @@ func (j *job) analyzePDF(ctx context.Context) error {
 		input.Exclusions = j.event.Settings.Exclusions
 		if j.event.Settings.Voice != "" {
 			voiceID, voiceStyle = parseVoice(j.event.Settings.Voice)
-			input.VoiceName = voiceID
-			input.VoiceStyle = voiceStyle
+
 			// Look up the trait from the config, fallback to "unknown"
 			if trait, ok := j.cfg.Voices[voiceID]; ok {
 				voiceTrait = trait
 			} else {
 				voiceTrait = "unknown"
 			}
+
+			// Fallback: If no style provided in input, use the configured trait
+			if voiceStyle == "" {
+				voiceStyle = voiceTrait
+			}
+
+			input.VoiceName = voiceID
+			input.VoiceStyle = voiceStyle
 			input.VoiceTrait = voiceTrait
 		}
 	}
