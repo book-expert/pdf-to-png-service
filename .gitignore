@@ -1,0 +1,23 @@
+# Binaries
+pdf-to-png-service
+*.exe
+*.dll
+*.so
+*.dylib
+
+# Logs
+logs/
+*.log
+
+# Temp
+tmp/
+*.tmp
+
+# IDEs
+.vscode/
+.idea/
+*.swp
+
+# OS
+.DS_Store
+Thumbs.db
