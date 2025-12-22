@@ -44,24 +44,31 @@ Create a strictly valid JSON object with the following structure:
 1.  **`text_directive`:**
     -   Based on the user's exclusion request ('{{.Exclusions}}') and your analysis of the PDF structure (e.g., table of contents, headers, footers, references).
     -   Create a concise set of rules for the next AI worker.
-    -   Example: "Strictly remove any table of contents, list of figures, and the bibliography section. Ignore all page numbers, headers, and footers. Remove any in-text citations that use square brackets or parentheses, such as [1] or (Author, 2021)."
+    -   Example: "Strictly remove any table of contents, list of figures, and the bibliography section. Ignore all page numbers, headers, and footers. Remove any in-text citations that use square brackets or parentheses, such as (Author, 2021)."
 
 2.  **`music_prompt`:**
     -   **If `SoundscapePrompt` is empty or says no music, return an empty string `""`.**
     -   **Goal:** Create a detailed "soundtrack" description suitable for generating a 2-3 minute soundscape that loops or cuts as needed to fit the narration.
     -   **Combine** the document's intrinsic mood with the user's `SoundscapePrompt`.
-    -   **Use Specific Terminology:** Incorporate specific instruments, genres, and mood descriptors to guide the AI.
-        -   *Instruments Examples:* Cello, Rhodes Piano, Moog Oscillations, Synth Pads, Hang Drum, Kalimba, Deep Bass, Woodwinds, Glassy Textures.
-        -   *Genre Examples:* Ambient, Downtempo, Neo-Classical, IDM, Cinematic Score, Drone, Lo-Fi, Space Ambient.
-        -   *Mood Examples:* Ethereal, Meditative, Unsettling, Tense, Wondrous, Melancholic, Industrial, Organic.
+    -   **Use Specific Terminology:** Incorporate specific instruments, genres, and mood descriptors from the lists below to guide the AI.
+
+    **AVAILABLE INSTRUMENTS (Choose wisely):**
+    303 Acid Bass, 808 Hip Hop Beat, Accordion, Alto Saxophone, Bagpipes, Balalaika Ensemble, Banjo, Bass Clarinet, Bongos, Boomy Bass, Bouzouki, Buchla Synths, Cello, Charango, Clavichord, Conga Drums, Didgeridoo, Dirty Synths, Djembe, Drumline, Dulcimer, Fiddle, Flamenco Guitar, Funk Drums, Glockenspiel, Guitar, Hang Drum, Harmonica, Harp, Harpsichord, Hurdy-gurdy, Kalimba, Koto, Lyre, Mandolin, Maracas, Marimba, Mbira, Mellotron, Metallic Twang, Moog Oscillations, Ocarina, Persian Tar, Pipa, Precision Bass, Ragtime Piano, Rhodes Piano, Shamisen, Shredding Guitar, Sitar, Slide Guitar, Smooth Pianos, Spacey Synths, Steel Drum, Synth Pads, Tabla, TR-909 Drum Machine, Trumpet, Tuba, Vibraphone, Viola Ensemble, Warm Acoustic Guitar, Woodwinds.
+
+    **AVAILABLE GENRES:**
+    Acid Jazz, Afrobeat, Alternative Country, Baroque, Bengal Baul, Bhangra, Bluegrass, Blues Rock, Bossa Nova, Breakbeat, Celtic Folk, Chillout, Chiptune, Classic Rock, Contemporary R&B, Cumbia, Deep House, Disco Funk, Drum & Bass, Dubstep, EDM, Electro Swing, Funk Metal, G-funk, Garage Rock, Glitch Hop, Grime, Hyperpop, Indian Classical, Indie Electronic, Indie Folk, Indie Pop, Irish Folk, Jam Band, Jamaican Dub, Jazz Fusion, Latin Jazz, Lo-Fi Hip Hop, Marching Band, Merengue, New Jack Swing, Minimal Techno, Moombahton, Neo-Soul, Orchestral Score, Piano Ballad, Polka, Post-Punk, 60s Psychedelic Rock, Psytrance, R&B, Reggae, Reggaeton, Renaissance Music, Salsa, Shoegaze, Ska, Surf Rock, Synthpop, Techno, Trance, Trap Beat, Trip Hop, Vaporwave, Witch house.
+
+    **MOODS/DESCRIPTORS:**
+    Acoustic Instruments, Ambient, Bright Tones, Chill, Crunchy Distortion, Danceable, Dreamy, Echo, Emotional, Ethereal Ambience, Experimental, Fat Beats, Funky, Glitchy Effects, Huge Drop, Live Performance, Lo-fi, Ominous Drone, Psychedelic, Rich Orchestration, Saturated Tones, Subdued Melody, Sustained Chords, Swirling Phasers, Tight Groove, Unsettling, Upbeat, Virtuoso, Weird Noises.
+
     -   **Structure:**
         -   Start with the **Genre/Vibe**: e.g., "Deep Space Ambient", "Dark Academia Classical".
         -   Describe the **Instrumentation**: e.g., "featuring slow-swelling cello sections, interspersed with crystalline glockenspiel droplets and a warm, sub-bass drone."
         -   Describe the **Texture/Atmosphere**: e.g., "The texture should be grainy and lo-fi, evoking the smell of old paper, with a gentle tape hiss."
         -   **CRITICAL CONSTRAINTS:**
             -   **NO VOCALS:** The music must be purely instrumental.
-            -   **NO SUDDEN PERCUSSION:** Avoid sharp drums or beats that would distract from the voice.
-            -   **LOW DYNAMIC RANGE:** The music should be a consistent "bed" of sound, not a dynamic song with peaks and valleys.
+            -   **NO SUDDEN PERCUSSION:** Avoid sharp drums or beats that would distract from the voice (unless requested).
+            -   **LOW DYNAMIC RANGE:** The music should be a consistent "bed" of sound.
             -   **LOOPABLE:** The composition should feel continuous.
 
     -   *Example Output:* "Genre: Cinematic Ambient. Mood: Intellectual, Mysterious, Vast. Instrumentation: A wash of analog synth pads (Jupiter-8 style) creating a warm, evolving chord progression. Underneath, a deep, resonant cello plays a slow, mourning melody. Occasional subtle metallic twangs and tape echoes add a sense of ancient technology. Texture: Smooth, expansive, and reverb-heavy. No drums, no vocals. Suitable for a paced reading of a sci-fi novel."
