@@ -1,0 +1,7 @@
+# Binaries
+/pdf-to-png-service
+*.exe
+*.test
+
+# OS
+.DS_Store
