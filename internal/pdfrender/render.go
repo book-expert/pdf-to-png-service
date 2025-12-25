@@ -70,9 +70,6 @@ var (
 // Options holds all configurable parameters for a Processor.
 type Options struct {
 	ProgressBarOutput      io.Writer
-	InputPath              string // Kept for struct compatibility but unused in main path
-	OutputPath             string // Kept for struct compatibility but unused in main path
-	ProjectRoot            string // Kept for struct compatibility but unused in main path
 	DPI                    int
 	Workers                int
 	BlankFuzzPercent       int
