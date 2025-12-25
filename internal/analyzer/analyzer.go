@@ -50,7 +50,6 @@ type Config struct {
 	Model          string
 	AnalysisPrompt string
 	Timeout        time.Duration
-	Voices         map[string]string
 }
 
 type Analyzer struct {

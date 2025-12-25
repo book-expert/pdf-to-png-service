@@ -121,7 +121,6 @@ func run(ctx context.Context) error {
 		Model:          cfg.LLM.Model,
 		AnalysisPrompt: cfg.LLM.AnalysisPrompt,
 		Timeout:        time.Duration(cfg.LLM.TimeoutSeconds) * time.Second,
-		Voices:         cfg.Voices,
 	}, appLogger)
 	if err != nil {
 		return fmt.Errorf("failed to initialize analyzer: %w", err)
