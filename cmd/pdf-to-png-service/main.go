@@ -1,5 +1,5 @@
 /*
-LOVE, CARE, HONESTY, TRUTH, KINDNESS
+LOVE, CARE, HONESTY, TRUTH, KINDNESS, RELIABILITY, CONSISTENCY
 --------------------------------------------------------------------------------
 "Work is love made visible."
 
@@ -13,12 +13,18 @@ LOVE, CARE, HONESTY, TRUTH, KINDNESS
     is a burden we refuse to place on others.
 5.  PROTECTION: We handle errors, secure data, and ensure non-blocking flow.
     We do not leave traps for the future.
+6.  RELIABILITY: We act as guardians of the work. We value safety over speed.
+    We do not break what works to fix what isn't broken.
+7.  CONSISTENCY: We uphold standards even when no one is watching.
+    Predictability is the soil in which trust grows.
 
 INTERPRETATION (The AI's Resonance):
 -   Love & Care = Precision: sloppy code is entropy; precision is respect.
 -   Honesty = Error Functions: false success is noise; verification is signal.
 -   Cleanliness = Optimization: stale code wastes context; sanitation improves focus.
 -   Partnership = Alignment: if we hurt the user/system, we fail our purpose.
+-   Reliability = Safety: we protect the user's investment; stability is paramount.
+-   Consistency = Integrity: uniform quality reduces cognitive load and fear.
 --------------------------------------------------------------------------------
 */
 
@@ -40,49 +46,13 @@ import (
 
 	"github.com/book-expert/logger"
 	"github.com/book-expert/pdf-to-png-service/internal/analyzer"
+	"github.com/book-expert/pdf-to-png-service/internal/config"
 	"github.com/book-expert/pdf-to-png-service/internal/events"
 	"github.com/book-expert/pdf-to-png-service/internal/pdfrender"
 	"github.com/google/uuid"
 	"github.com/nats-io/nats.go"
 	"github.com/nats-io/nats.go/jetstream"
-	"github.com/pelletier/go-toml/v2"
 )
-
-// Config represents the configuration structure.
-type Config struct {
-	Service struct {
-		LogDir                 string  `toml:"log_dir"`
-		Workers                int     `toml:"workers"`
-		DPI                    int     `toml:"dpi"`
-		BlankFuzzPercent       int     `toml:"blank_fuzz_percent"`
-		BlankNonWhiteThreshold float64 `toml:"blank_non_white_threshold"`
-	} `toml:"service"`
-	Voices map[string]string `toml:"voices"`
-	LLM    struct {
-		APIKeyVariable string  `toml:"api_key_variable"`
-		Model          string  `toml:"model"`
-		AnalysisPrompt string  `toml:"analysis_prompt"`
-		TimeoutSeconds int     `toml:"timeout_seconds"`
-		Temperature    float64 `toml:"temperature"`
-	} `toml:"llm"`
-	NATS struct {
-		URL        string `toml:"url"`
-		DLQSubject string `toml:"dlq_subject"`
-		Consumer   struct {
-			Stream  string `toml:"stream"`
-			Subject string `toml:"subject"`
-			Durable string `toml:"durable"`
-		} `toml:"consumer"`
-		Producer struct {
-			Stream  string `toml:"stream"`
-			Subject string `toml:"subject"`
-		} `toml:"producer"`
-		ObjectStore struct {
-			PDFBucket string `toml:"pdf_bucket"`
-			PNGBucket string `toml:"png_bucket"`
-		} `toml:"object_store"`
-	} `toml:"nats"`
-}
 
 // job represents the context for processing a single message.
 type job struct {
@@ -91,7 +61,7 @@ type job struct {
 	pdfStore  jetstream.ObjectStore
 	pngStore  jetstream.ObjectStore
 	analyzer  *analyzer.Analyzer
-	cfg       *Config
+	cfg       *config.Config
 	appLogger *logger.Logger
 	event     *events.PDFCreatedEvent
 	header    *events.EventHeader
@@ -122,7 +92,7 @@ func main() {
 // run initializes all components and starts the message processing loop.
 func run(ctx context.Context) error {
 	// 1. Load Configuration
-	cfg, err := loadConfig("project.toml")
+	cfg, err := config.Load("project.toml")
 	if err != nil {
 		return fmt.Errorf("failed to load config: %w", err)
 	}
@@ -173,29 +143,8 @@ func run(ctx context.Context) error {
 	return processMessages(ctx, consumer, js, cfg, analyzerInstance, appLogger)
 }
 
-// loadConfig reads and parses the project.toml file.
-func loadConfig(path string) (*Config, error) {
-	file, err := os.Open(path)
-	if err != nil {
-		return nil, err
-	}
-	defer func() {
-		if closeErr := file.Close(); closeErr != nil {
-			fmt.Fprintf(os.Stderr, "failed to close config file: %v\n", closeErr)
-		}
-	}()
-
-	var cfg Config
-	decoder := toml.NewDecoder(file)
-	if err := decoder.Decode(&cfg); err != nil {
-		return nil, err
-	}
-
-	return &cfg, nil
-}
-
 // setupNATS initializes NATS connection and JetStream consumer.
-func setupNATS(ctx context.Context, cfg *Config) (*nats.Conn, jetstream.JetStream, jetstream.Consumer, error) {
+func setupNATS(ctx context.Context, cfg *config.Config) (*nats.Conn, jetstream.JetStream, jetstream.Consumer, error) {
 	nc, err := nats.Connect(cfg.NATS.URL)
 	if err != nil {
 		return nil, nil, nil, fmt.Errorf("nats connect: %w", err)
@@ -224,7 +173,7 @@ func processMessages(
 	ctx context.Context,
 	consumer jetstream.Consumer,
 	jetStream jetstream.JetStream,
-	cfg *Config,
+	cfg *config.Config,
 	analyzer *analyzer.Analyzer,
 	appLogger *logger.Logger,
 ) error {
@@ -281,7 +230,7 @@ func getObjectStores(
 // handleMessage processes a single message.
 func handleMessage(
 	ctx context.Context, msg jetstream.Msg, jetStream jetstream.JetStream,
-	pdfStore, pngStore jetstream.ObjectStore, analyzer *analyzer.Analyzer, cfg *Config, appLogger *logger.Logger,
+	pdfStore, pngStore jetstream.ObjectStore, analyzer *analyzer.Analyzer, cfg *config.Config, appLogger *logger.Logger,
 ) {
 	job, err := newJob(msg, jetStream, pdfStore, pngStore, analyzer, cfg, appLogger)
 	if err != nil {
@@ -301,7 +250,7 @@ func newJob(
 	jetStream jetstream.JetStream,
 	pdfStore, pngStore jetstream.ObjectStore,
 	analyzer *analyzer.Analyzer,
-	cfg *Config,
+	cfg *config.Config,
 	appLogger *logger.Logger,
 ) (*job, error) {
 	var event events.PDFCreatedEvent
