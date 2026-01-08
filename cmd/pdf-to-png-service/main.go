@@ -207,7 +207,7 @@ func processMessages(
 	}
 }
 
-// getObjectStores retrieves the object stores for PDFs and PNGs.
+// getObjectStores retrieves the object stores for PDFs and PNGs, creating them if they don't exist.
 func getObjectStores(
 	ctx context.Context,
 	jetStream jetstream.JetStream,
@@ -215,12 +215,22 @@ func getObjectStores(
 ) (pdfStore, pngStore jetstream.ObjectStore, err error) {
 	pdfStore, err = jetStream.ObjectStore(ctx, pdfBucket)
 	if err != nil {
-		return nil, nil, fmt.Errorf("failed to bind to PDF object store: %w", err)
+		pdfStore, err = jetStream.CreateObjectStore(ctx, jetstream.ObjectStoreConfig{
+			Bucket: pdfBucket,
+		})
+		if err != nil {
+			return nil, nil, fmt.Errorf("failed to bind or create PDF object store: %w", err)
+		}
 	}
 
 	pngStore, err = jetStream.ObjectStore(ctx, pngBucket)
 	if err != nil {
-		return nil, nil, fmt.Errorf("failed to bind to PNG object store: %w", err)
+		pngStore, err = jetStream.CreateObjectStore(ctx, jetstream.ObjectStoreConfig{
+			Bucket: pngBucket,
+		})
+		if err != nil {
+			return nil, nil, fmt.Errorf("failed to bind or create PNG object store: %w", err)
+		}
 	}
 
 	return pdfStore, pngStore, nil
