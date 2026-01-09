@@ -117,10 +117,11 @@ func run(ctx context.Context) error {
 	}
 
 	analyzerInstance, err := analyzer.New(ctx, analyzer.Config{
-		APIKey:         apiKey,
-		Model:          cfg.LLM.Model,
-		AnalysisPrompt: cfg.LLM.AnalysisPrompt,
-		Timeout:        time.Duration(cfg.LLM.TimeoutSeconds) * time.Second,
+		APIKey:                        apiKey,
+		Model:                         cfg.LLM.Model,
+		TextDirectiveGenerationPrompt: cfg.LLM.TextDirectiveGenerationPrompt,
+		MusicConfigGenerationPrompt:   cfg.LLM.MusicConfigGenerationPrompt,
+		Timeout:                       time.Duration(cfg.LLM.TimeoutSeconds) * time.Second,
 	}, appLogger)
 	if err != nil {
 		return fmt.Errorf("failed to initialize analyzer: %w", err)
@@ -268,84 +269,83 @@ func newJob(
 	}
 
 	return &job{
-		msg:       msg,
-		jetStream: jetStream,
-		pdfStore:  pdfStore,
-		pngStore:  pngStore,
-		analyzer:  analyzer,
-		cfg:       cfg,
-		appLogger: appLogger,
-		event:     &event,
-		header:    &event.Header,
-	}, nil
+			msg:       msg,
+			jetStream: jetStream,
+			pdfStore:  pdfStore,
+			pngStore:  pngStore,
+			analyzer:  analyzer,
+			cfg:       cfg,
+			appLogger: appLogger,
+			event:     &event,
+			header:    &event.Header,
+		},
+		nil
 }
 
 // executeProcessingSteps runs the core logic of the job.
-func (j *job) run(ctx context.Context) {
-	j.appLogger.Infof("Processing PDF: %s", j.event.PDFKey)
-	if err := j.msg.InProgress(); err != nil {
-		j.appLogger.Warnf("Failed to send InProgress: %v", err)
+func (job *job) run(ctx context.Context) {
+	job.appLogger.Infof("Processing PDF: %s", job.event.PDFKey)
+	if err := job.msg.InProgress(); err != nil {
+		job.appLogger.Warnf("Failed to send InProgress: %v", err)
 	}
 
-	if err := j.downloadPDF(ctx); err != nil {
-		j.appLogger.Errorf("Download failed: %v", err)
-		if nakErr := j.msg.Nak(); nakErr != nil {
-			j.appLogger.Errorf("Failed to NAK after download fail: %v", nakErr)
+	if err := job.downloadPDF(ctx); err != nil {
+		job.appLogger.Errorf("Download failed: %v", err)
+		if nakErr := job.msg.Nak(); nakErr != nil {
+			job.appLogger.Errorf("Failed to NAK after download fail: %v", nakErr)
 		}
 		return
 	}
 
 	// Analysis Step
-	if err := j.analyzePDF(ctx); err != nil {
-		j.appLogger.Errorf("Analysis failed: %v", err)
-		// We might want to continue even if analysis fails (fallback), but for now we fail strict.
-		// Or maybe publish to DLQ.
-		if _, pubErr := j.jetStream.Publish(ctx, j.cfg.NATS.DLQSubject, j.msg.Data()); pubErr != nil {
-			j.appLogger.Errorf("Failed to publish to DLQ: %v", pubErr)
+	if err := job.analyzePDF(ctx); err != nil {
+		job.appLogger.Errorf("Analysis failed: %v", err)
+		if _, pubErr := job.jetStream.Publish(ctx, job.cfg.NATS.DLQSubject, job.msg.Data()); pubErr != nil {
+			job.appLogger.Errorf("Failed to publish to DLQ: %v", pubErr)
 		}
-		if termErr := j.msg.Term(); termErr != nil {
-			j.appLogger.Errorf("Failed to Term message: %v", termErr)
+		if termErr := job.msg.Term(); termErr != nil {
+			job.appLogger.Errorf("Failed to Term message: %v", termErr)
 		}
 		return
 	}
 
-	if err := j.processPDF(ctx); err != nil {
-		j.appLogger.Errorf("Processing failed: %v", err)
-		if _, pubErr := j.jetStream.Publish(ctx, j.cfg.NATS.DLQSubject, j.msg.Data()); pubErr != nil {
-			j.appLogger.Errorf("Failed to publish to DLQ: %v", pubErr)
+	if err := job.processPDF(ctx); err != nil {
+		job.appLogger.Errorf("Processing failed: %v", err)
+		if _, pubErr := job.jetStream.Publish(ctx, job.cfg.NATS.DLQSubject, job.msg.Data()); pubErr != nil {
+			job.appLogger.Errorf("Failed to publish to DLQ: %v", pubErr)
 		}
-		if termErr := j.msg.Term(); termErr != nil {
-			j.appLogger.Errorf("Failed to Term message: %v", termErr)
-		}
-		return
-	}
-
-	if err := j.publishPNGs(ctx); err != nil {
-		j.appLogger.Errorf("Publish failed: %v", err)
-		if nakErr := j.msg.Nak(); nakErr != nil {
-			j.appLogger.Errorf("Failed to NAK after publish fail: %v", nakErr)
+		if termErr := job.msg.Term(); termErr != nil {
+			job.appLogger.Errorf("Failed to Term message: %v", termErr)
 		}
 		return
 	}
 
-	if ackErr := j.msg.Ack(); ackErr != nil {
-		j.appLogger.Errorf("Failed to ACK message: %v", ackErr)
+	if err := job.publishPNGs(ctx); err != nil {
+		job.appLogger.Errorf("Publish failed: %v", err)
+		if nakErr := job.msg.Nak(); nakErr != nil {
+			job.appLogger.Errorf("Failed to NAK after publish fail: %v", nakErr)
+		}
+		return
 	}
-	j.appLogger.Successf("Completed: %s", j.event.PDFKey)
+
+	if ackErr := job.msg.Ack(); ackErr != nil {
+		job.appLogger.Errorf("Failed to ACK message: %v", ackErr)
+	}
+	job.appLogger.Successf("Completed: %s", job.event.PDFKey)
 }
 
-func (j *job) downloadPDF(ctx context.Context) error {
-	obj, err := j.pdfStore.Get(ctx, j.event.PDFKey)
+func (job *job) downloadPDF(ctx context.Context) error {
+	obj, err := job.pdfStore.Get(ctx, job.event.PDFKey)
 	if err != nil {
 		return err
 	}
 	defer func() {
 		if closeErr := obj.Close(); closeErr != nil {
-			j.appLogger.Warnf("Failed to close object store object: %v", closeErr)
+			job.appLogger.Warnf("Failed to close object store object: %v", closeErr)
 		}
 	}()
 
-	j.pdfData, err = io.ReadAll(obj)
+	job.pdfData, err = io.ReadAll(obj)
 	return err
 }
 
@@ -359,21 +359,22 @@ func parseVoice(voice string) (voiceID, voiceStyle string) {
 	return strings.TrimSpace(voice), ""
 }
 
-func (j *job) analyzePDF(ctx context.Context) error {
-	j.appLogger.Infof("Analyzing PDF for Narration Directive...")
+func (job *job) analyzePDF(ctx context.Context) error {
+	job.appLogger.Infof("Analyzing PDF for Narration Directive...")
 
 	// 1. Initialize inputs and parse voice string.
 	input := analyzer.AnalysisInput{}
 	var voiceID, voiceStyle, voiceTrait string
 
-	if j.event.Settings != nil {
-		input.SoundscapePrompt = j.event.Settings.SoundscapePrompt
-		input.Exclusions = j.event.Settings.Exclusions
-		if j.event.Settings.Voice != "" {
-			voiceID, voiceStyle = parseVoice(j.event.Settings.Voice)
+	if job.event.Settings != nil {
+		input.SoundscapePrompt = job.event.Settings.SoundscapePrompt
+		input.AugmentationPrompt = job.event.Settings.AugmentationPrompt
+		input.Exclusions = job.event.Settings.Exclusions
+		if job.event.Settings.Voice != "" {
+			voiceID, voiceStyle = parseVoice(job.event.Settings.Voice)
 
 			// Look up the trait from the config, fallback to "unknown"
-			if trait, ok := j.cfg.Voices[voiceID]; ok {
+			if trait, ok := job.cfg.Voices[voiceID]; ok {
 				voiceTrait = trait
 			} else {
 				voiceTrait = "unknown"
@@ -389,79 +390,109 @@ func (j *job) analyzePDF(ctx context.Context) error {
 			input.VoiceTrait = voiceTrait
 		}
 	}
-	j.appLogger.Infof("Parsed voice. ID: '%s', Style: '%s', Trait: '%s'", voiceID, voiceStyle, voiceTrait)
+	job.appLogger.Infof("Parsed voice. ID: '%s', Style: '%s', Trait: '%s'", voiceID, voiceStyle, voiceTrait)
 
-	// 2. Call the analyzer to get LLM-generated directives.
-	analysisResp, err := j.analyzer.AnalyzePDF(ctx, j.pdfData, input)
+	// 2. Generate Text Directive (Always required for extraction)
+	textDirective, err := job.analyzer.GenerateTextDirective(ctx, job.pdfData, input)
 	if err != nil {
-		return fmt.Errorf("gemini analysis: %w", err)
+		return fmt.Errorf("generate text directive: %w", err)
 	}
-	j.appLogger.Infof("Analysis Complete. Music Prompt: '%s', Text Directive: '%s'", analysisResp.MusicPrompt, analysisResp.TextDirective)
 
-	// 3. Create the comprehensive AudioSessionConfig.
-	config := &events.AudioSessionConfig{
+	// 3. Generate Music Configuration (Conditional)
+	var musicPrompt string
+	var generationConfig *events.LyriaGenerationConfig
+
+	if job.event.Settings.SoundscapePrompt == "" {
+		musicPrompt = events.NoSoundscapeDirective
+		job.appLogger.Infof("Empty SoundscapePrompt from user. Setting MusicPrompt to '%s'.", musicPrompt)
+	} else {
+		musicResp, err := job.analyzer.GenerateMusicConfig(ctx, job.pdfData, input)
+		if err != nil {
+			// RESILIENCE: Music failure is non-fatal for text extraction.
+			job.appLogger.Warnf("Music configuration analysis failed: %v. Proceeding without soundscape.", err)
+			musicPrompt = events.NoSoundscapeDirective
+		} else {
+			musicPrompt = musicResp.MusicPrompt
+			generationConfig = &events.LyriaGenerationConfig{
+				BPM:                 musicResp.GenerationConfig.BPM,
+				Density:             musicResp.GenerationConfig.Density,
+				Brightness:          musicResp.GenerationConfig.Brightness,
+				Guidance:            musicResp.GenerationConfig.Guidance,
+				MuteBass:            musicResp.GenerationConfig.MuteBass,
+				MuteDrums:           musicResp.GenerationConfig.MuteDrums,
+				OnlyBassAndDrums:    musicResp.GenerationConfig.OnlyBassAndDrums,
+				MusicGenerationMode: musicResp.GenerationConfig.MusicGenerationMode,
+				Scale:               musicResp.GenerationConfig.Scale,
+			}
+			job.appLogger.Infof("Music Configuration generated successfully.")
+		}
+	}
+
+	// 4. Create the comprehensive AudioSessionConfig.
+	audioConfig := &events.AudioSessionConfig{
 		SessionID:        uuid.New().String(),
-		SourceDocumentID: j.event.PDFKey,
+		SourceDocumentID: job.event.PDFKey,
 		VoiceID:          voiceID,
 		VoiceStyle:       voiceStyle,
-		MusicPrompt:      analysisResp.MusicPrompt,
-		TextDirective:    analysisResp.TextDirective,
+		MusicPrompt:      musicPrompt,
+		GenerationConfig: generationConfig,
+		TextDirective:    textDirective,
 	}
 
-	// 4. Update the event settings with the new config.
-	if j.event.Settings == nil {
-		j.event.Settings = &events.JobSettings{}
+	// 5. Update the event settings with the new config.
+	if job.event.Settings == nil {
+		job.event.Settings = &events.JobSettings{}
 	}
-	j.event.Settings.AudioSessionConfig = config
+	job.event.Settings.AudioSessionConfig = audioConfig
 
 	return nil
 }
 
-func (j *job) processPDF(ctx context.Context) error {
+func (job *job) processPDF(ctx context.Context) error {
 	opts := &pdfrender.Options{
-		DPI:                    j.cfg.Service.DPI,
-		Workers:                j.cfg.Service.Workers,
-		BlankFuzzPercent:       j.cfg.Service.BlankFuzzPercent,
-		BlankNonWhiteThreshold: j.cfg.Service.BlankNonWhiteThreshold,
+		DPI:                    job.cfg.Service.DPI,
+		Workers:                job.cfg.Service.Workers,
+		BlankFuzzPercent:       job.cfg.Service.BlankFuzzPercent,
+		BlankNonWhiteThreshold: job.cfg.Service.BlankNonWhiteThreshold,
 		ProgressBarOutput:      io.Discard, // Simple logs are enough
 	}
 
 	// Create processor
-	processor := pdfrender.NewProcessor(opts, j.appLogger)
+	processor := pdfrender.NewProcessor(opts, job.appLogger)
 
-	pngs, err := processor.ProcessSinglePDFFromBytes(ctx, j.pdfData)
+	pngs, err := processor.ProcessSinglePDFFromBytes(ctx, job.pdfData)
 	if err != nil {
 		return err
 	}
-	j.pngData = pngs
+	job.pngData = pngs
 	return nil
 }
 
-func (j *job) publishPNGs(ctx context.Context) error {
-	totalPages := len(j.pngData)
-	for i, png := range j.pngData {
-		pngKey := fmt.Sprintf("%s-%d.png", j.event.PDFKey, i+1)
+func (job *job) publishPNGs(ctx context.Context) error {
+	totalPages := len(job.pngData)
+	for i, png := range job.pngData {
+		pngKey := fmt.Sprintf("%s-%d.png", job.event.PDFKey, i+1)
 
-		if _, err := j.pngStore.PutBytes(ctx, pngKey, png); err != nil {
+		if _, err := job.pngStore.PutBytes(ctx, pngKey, png); err != nil {
 			return err
 		}
 
 		event := events.PNGCreatedEvent{
 			Header: events.EventHeader{
-				WorkflowID: j.header.WorkflowID,
-				UserID:     j.header.UserID,
-				TenantID:   j.header.TenantID,
+				WorkflowID: job.header.WorkflowID,
+				UserID:     job.header.UserID,
+				TenantID:   job.header.TenantID,
 				EventID:    uuid.New().String(),
 				Timestamp:  time.Now(),
 			},
 			PNGKey:     pngKey,
 			PageNumber: i + 1,
 			TotalPages: totalPages,
-			Settings:   j.event.Settings, // Settings now include the AudioSessionConfig
+			Settings:   job.event.Settings, // Settings now include the AudioSessionConfig
 		}
 
 		data, _ := json.Marshal(event)
-		if _, err := j.jetStream.Publish(ctx, j.cfg.NATS.Producer.Subject, data); err != nil {
+		if _, err := job.jetStream.Publish(ctx, job.cfg.NATS.Producer.Subject, data); err != nil {
 			return err
 		}
 	}

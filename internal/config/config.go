@@ -47,11 +47,12 @@ type Config struct {
 	} `toml:"service"`
 	Voices map[string]string `toml:"voices"`
 	LLM    struct {
-		APIKeyVariable string  `toml:"api_key_variable"`
-		Model          string  `toml:"model"`
-		AnalysisPrompt string  `toml:"analysis_prompt"`
-		TimeoutSeconds int     `toml:"timeout_seconds"`
-		Temperature    float64 `toml:"temperature"`
+		APIKeyVariable                string  `toml:"api_key_variable"`
+		Model                         string  `toml:"model"`
+		TextDirectiveGenerationPrompt string  `toml:"text_directive_generation_prompt"`
+		MusicConfigGenerationPrompt   string  `toml:"music_config_generation_prompt"`
+		TimeoutSeconds                int     `toml:"timeout_seconds"`
+		Temperature                   float64 `toml:"temperature"`
 	} `toml:"llm"`
 	NATS struct {
 		URL        string `toml:"url"`

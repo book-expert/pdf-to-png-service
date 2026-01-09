@@ -46,10 +46,11 @@ import (
 )
 
 type Config struct {
-	APIKey         string
-	Model          string
-	AnalysisPrompt string
-	Timeout        time.Duration
+	APIKey                        string
+	Model                         string
+	TextDirectiveGenerationPrompt string
+	MusicConfigGenerationPrompt   string
+	Timeout                       time.Duration
 }
 
 type Analyzer struct {
@@ -74,24 +75,69 @@ func New(ctx context.Context, cfg Config, logger *logger.Logger) (*Analyzer, err
 }
 
 type AnalysisInput struct {
-	SoundscapePrompt string
-	Exclusions       string
-	VoiceStyle       string
-	VoiceName        string
-	VoiceTrait       string
+	SoundscapePrompt   string
+	AugmentationPrompt string
+	Exclusions         string
+	VoiceStyle         string
+	VoiceName          string
+	VoiceTrait         string
 }
 
-type AnalysisResponse struct {
-	TextDirective string `json:"text_directive"`
-
-	MusicPrompt string `json:"music_prompt"`
+type LyriaParams struct {
+	BPM                 int     `json:"bpm,omitempty"`
+	Density             float64 `json:"density,omitempty"`
+	Brightness          float64 `json:"brightness,omitempty"`
+	Guidance            float64 `json:"guidance,omitempty"`
+	MuteBass            bool    `json:"mute_bass,omitempty"`
+	MuteDrums           bool    `json:"mute_drums,omitempty"`
+	OnlyBassAndDrums    bool    `json:"only_bass_and_drums,omitempty"`
+	MusicGenerationMode string  `json:"music_generation_mode,omitempty"`
+	Scale               string  `json:"scale,omitempty"`
 }
 
-func (a *Analyzer) AnalyzePDF(ctx context.Context, pdfData []byte, input AnalysisInput) (*AnalysisResponse, error) {
+type MusicAnalysisResponse struct {
+	MusicPrompt      string      `json:"music_prompt"`
+	GenerationConfig LyriaParams `json:"generation_config"`
+}
+
+// GenerateTextDirective analyzes the PDF and returns a plain text string of instructions.
+func (a *Analyzer) GenerateTextDirective(ctx context.Context, pdfData []byte, input AnalysisInput) (string, error) {
+	return a.generateContent(ctx, pdfData, input, a.cfg.TextDirectiveGenerationPrompt, "text/plain")
+}
+
+// GenerateMusicConfig analyzes the PDF and returns a structured configuration for Lyria.
+func (a *Analyzer) GenerateMusicConfig(ctx context.Context, pdfData []byte, input AnalysisInput) (*MusicAnalysisResponse, error) {
+	jsonStr, err := a.generateContent(ctx, pdfData, input, a.cfg.MusicConfigGenerationPrompt, "application/json")
+	if err != nil {
+		return nil, err
+	}
+
+	// Clean markdown block if present (defensive)
+	jsonStr = strings.TrimPrefix(jsonStr, "```json")
+	jsonStr = strings.TrimPrefix(jsonStr, "```")
+	jsonStr = strings.TrimSuffix(jsonStr, "```")
+
+	var resp MusicAnalysisResponse
+	if err := json.Unmarshal([]byte(jsonStr), &resp); err != nil {
+		a.logger.Errorf("Failed to parse Music Config JSON: %s", jsonStr)
+		return nil, fmt.Errorf("parse json response: %w", err)
+	}
+
+	return &resp, nil
+}
+
+// generateContent is a helper to handle the common flow: upload PDF -> execute prompt -> call Gemini.
+func (a *Analyzer) generateContent(
+	ctx context.Context,
+	pdfData []byte,
+	input AnalysisInput,
+	promptTemplate string,
+	responseMIMEType string,
+) (string, error) {
 	// 1. Write PDF to temp file for upload
 	tmpFile, err := os.CreateTemp("", "analyze-*.pdf")
 	if err != nil {
-		return nil, fmt.Errorf("create temp file: %w", err)
+		return "", fmt.Errorf("create temp file: %w", err)
 	}
 	defer func() {
 		if err := os.Remove(tmpFile.Name()); err != nil {
@@ -101,21 +147,21 @@ func (a *Analyzer) AnalyzePDF(ctx context.Context, pdfData []byte, input Analysi
 
 	if _, err := io.Copy(tmpFile, bytes.NewReader(pdfData)); err != nil {
 		_ = tmpFile.Close() // Best effort close
-		return nil, fmt.Errorf("write pdf data: %w", err)
+		return "", fmt.Errorf("write pdf data: %w", err)
 	}
 	if err := tmpFile.Close(); err != nil {
-		return nil, fmt.Errorf("close temp file: %w", err)
+		return "", fmt.Errorf("close temp file: %w", err)
 	}
 
 	// 2. Upload file to Gemini
 	uploadConfig := &genai.UploadFileConfig{
-		DisplayName: fmt.Sprintf("analyze-%d", time.Now().Unix()),
+		DisplayName: fmt.Sprintf("analyze-%d", time.Now().UnixNano()),
 		MIMEType:    "application/pdf",
 	}
 	// Re-open file for reading
 	f, err := os.Open(tmpFile.Name())
 	if err != nil {
-		return nil, fmt.Errorf("open temp file: %w", err)
+		return "", fmt.Errorf("open temp file: %w", err)
 	}
 	defer func() {
 		if err := f.Close(); err != nil {
@@ -125,7 +171,7 @@ func (a *Analyzer) AnalyzePDF(ctx context.Context, pdfData []byte, input Analysi
 
 	uploadResult, err := a.client.Files.Upload(ctx, f, uploadConfig)
 	if err != nil {
-		return nil, fmt.Errorf("upload file: %w", err)
+		return "", fmt.Errorf("upload file: %w", err)
 	}
 
 	// Defer deletion of the uploaded file from Gemini to save storage/cleanup
@@ -136,18 +182,25 @@ func (a *Analyzer) AnalyzePDF(ctx context.Context, pdfData []byte, input Analysi
 	}()
 
 	// 3. Prepare Prompt
-	tmpl, err := template.New("prompt").Parse(a.cfg.AnalysisPrompt)
+	tmpl, err := template.New("prompt").Parse(promptTemplate)
 	if err != nil {
-		return nil, fmt.Errorf("parse prompt template: %w", err)
+		return "", fmt.Errorf("parse prompt template: %w", err)
 	}
 
 	var promptBuf bytes.Buffer
 	if err := tmpl.Execute(&promptBuf, input); err != nil {
-		return nil, fmt.Errorf("execute prompt template: %w", err)
+		return "", fmt.Errorf("execute prompt template: %w", err)
 	}
 
-	// 4. Call Generate Content (JSON Enforced)
+	// 4. Call Generate Content
 	promptText := promptBuf.String()
+
+	// Configure generation options
+	genConfig := &genai.GenerateContentConfig{}
+	if responseMIMEType != "" {
+		genConfig.ResponseMIMEType = responseMIMEType
+	}
+
 	resp, err := a.client.Models.GenerateContent(
 		ctx,
 		a.cfg.Model,
@@ -166,36 +219,23 @@ func (a *Analyzer) AnalyzePDF(ctx context.Context, pdfData []byte, input Analysi
 				},
 			},
 		},
-		&genai.GenerateContentConfig{
-			ResponseMIMEType: "application/json",
-		},
+		genConfig,
 	)
 	if err != nil {
-		return nil, fmt.Errorf("generate content: %w", err)
+		return "", fmt.Errorf("generate content: %w", err)
 	}
 
 	if len(resp.Candidates) == 0 || len(resp.Candidates[0].Content.Parts) == 0 {
-		return nil, fmt.Errorf("no content generated")
+		return "", fmt.Errorf("no content generated")
 	}
 
-	// 5. Parse Response
+	// 5. Extract Response Text
 	var partText string
 	for _, part := range resp.Candidates[0].Content.Parts {
 		partText += part.Text
 	}
 
-	// Clean markdown block if present (defensive)
-	partText = strings.TrimPrefix(partText, "```json")
-	partText = strings.TrimPrefix(partText, "```")
-	partText = strings.TrimSuffix(partText, "```")
+	a.logger.Infof("Raw Gemini Response (%s): %s", responseMIMEType, partText)
 
-	a.logger.Infof("Raw Gemini Response: %s", partText)
-
-	var analysisResp AnalysisResponse
-	if err := json.Unmarshal([]byte(partText), &analysisResp); err != nil {
-		a.logger.Errorf("Failed to parse JSON response: %s", partText)
-		return nil, fmt.Errorf("parse json response: %w", err)
-	}
-
-	return &analysisResp, nil
+	return partText, nil
 }

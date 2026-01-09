@@ -14,42 +14,59 @@ model = "gemini-2.5-flash"
 max_retries = 3
 timeout_seconds = 60
 temperature = 0.5
-analysis_prompt = """
-Analyze the attached PDF document to create a "Cinematic Production Directive".
+text_directive_generation_prompt = """
+You are a text analysis director. Your job is to analyze the structure of the attached PDF and create a concise "text directive" prompt for another AI that will perform text extraction on a page-by-page basis.
 
-You will be given a PDF document, along with user preferences for voice and music. Your task is to analyze the document's content and generate a JSON object containing two directives:
-1.  `text_directive`: Instructions for an OCR process to clean up the extracted text.
-2.  `music_prompt`: A high-quality, highly descriptive prompt for a music generation model (Lyria RealTime) that captures the mood of the document.
+**Standard Directives (Your base instructions for the next AI):**
+- "Extract the main body text."
+- "Ignore all page numbers, headers, and footers."
+- "Do not extract content from the bibliography, reference, or index sections."
+- "Ignore any text that appears to be part of a table of contents or list of figures."
+- "Remove in-text citations, such as (Author, 2021) or [1]."
 
-**Input Data:**
-- **Narrator Voice:** The narrator will use the voice of '{{.VoiceName}}'.
-    - **Base Traits:** {{.VoiceTrait}}
-    - **User-Defined Style:** {{.VoiceStyle}}
-- **User Music Request:** '{{.SoundscapePrompt}}'
+**User Modifications:**
 - **User Exclusions:** '{{.Exclusions}}'
+- **User Augmentations:** '{{.AugmentationPrompt}}'
+
+**Your Task:**
+Combine the "Standard Directives" with the "User Modifications" to create a final, consolidated set of instructions. This final text directive will be used as a prompt for the text extraction AI.
+
+**Return a single plain text block containing the final directive. Do not use JSON.**
+"""
+
+music_config_generation_prompt = """
+You are a musical director. Your job is to analyze the attached PDF and a user's music request to create a complete JSON configuration for our Lyria music generation service.
+
+Even if the user provides a simple, short prompt (e.g., "sad piano"), your task is to analyze the document's mood, tone, and subject matter to create a rich, detailed, and unique configuration that enhances the narration.
+
+**User Preferences:**
+- **Music Request:** '{{.SoundscapePrompt}}'
+- **Augmentations:** '{{.AugmentationPrompt}}'
 
 **Task:**
-
-Create a strictly valid JSON object with the following structure:
+Generate a strictly valid JSON object that contains a `music_prompt` and a `generation_config`.
 
 ```json
 {
-  "text_directive": "...",
-  "music_prompt": "..."
+  "music_prompt": "...",
+  "generation_config": {
+    "bpm": ...,
+    "density": ...,
+    "brightness": ...,
+    "scale": "...",
+    "guidance": ...,
+    "mute_bass": ...,
+    "mute_drums": ...,
+    "only_bass_and_drums": ...,
+    "music_generation_mode": "..."
+  }
 }
 ```
 
 **Detailed Requirements:**
 
-1.  **`text_directive`:**
-    -   Based on the user's exclusion request ('{{.Exclusions}}') and your analysis of the PDF structure (e.g., table of contents, headers, footers, references).
-    -   Create a concise set of rules for the next AI worker.
-    -   Example: "Strictly remove any table of contents, list of figures, and the bibliography section. Ignore all page numbers, headers, and footers. Remove any in-text citations that use square brackets or parentheses, such as (Author, 2021)."
-
-2.  **`music_prompt`:**
-    -   **If `SoundscapePrompt` is empty or says no music, return an empty string `""`.**
+1.  **`music_prompt` (string):**
     -   **Goal:** Create a detailed "soundtrack" description suitable for generating a 2-3 minute soundscape that loops or cuts as needed to fit the narration.
-    -   **Combine** the document's intrinsic mood with the user's `SoundscapePrompt`.
     -   **Use Specific Terminology:** Incorporate specific instruments, genres, and mood descriptors from the lists below to guide the AI.
 
     **AVAILABLE INSTRUMENTS (Choose wisely):**
@@ -62,16 +79,36 @@ Create a strictly valid JSON object with the following structure:
     Acoustic Instruments, Ambient, Bright Tones, Chill, Crunchy Distortion, Danceable, Dreamy, Echo, Emotional, Ethereal Ambience, Experimental, Fat Beats, Funky, Glitchy Effects, Huge Drop, Live Performance, Lo-fi, Ominous Drone, Psychedelic, Rich Orchestration, Saturated Tones, Subdued Melody, Sustained Chords, Swirling Phasers, Tight Groove, Unsettling, Upbeat, Virtuoso, Weird Noises.
 
     -   **Structure:**
-        -   Start with the **Genre/Vibe**: e.g., "Deep Space Ambient", "Dark Academia Classical".
-        -   Describe the **Instrumentation**: e.g., "featuring slow-swelling cello sections, interspersed with crystalline glockenspiel droplets and a warm, sub-bass drone."
-        -   Describe the **Texture/Atmosphere**: e.g., "The texture should be grainy and lo-fi, evoking the smell of old paper, with a gentle tape hiss."
-        -   **CRITICAL CONSTRAINTS:**
-            -   **NO VOCALS:** The music must be purely instrumental.
-            -   **NO SUDDEN PERCUSSION:** Avoid sharp drums or beats that would distract from the voice (unless requested).
-            -   **LOW DYNAMIC RANGE:** The music should be a consistent "bed" of sound.
-            -   **LOOPABLE:** The composition should feel continuous.
-
+        -   Start with the **Genre/Vibe**.
+        -   Describe the **Instrumentation**.
+        -   Describe the **Texture/Atmosphere**.
+    
     -   *Example Output:* "Genre: Cinematic Ambient. Mood: Intellectual, Mysterious, Vast. Instrumentation: A wash of analog synth pads (Jupiter-8 style) creating a warm, evolving chord progression. Underneath, a deep, resonant cello plays a slow, mourning melody. Occasional subtle metallic twangs and tape echoes add a sense of ancient technology. Texture: Smooth, expansive, and reverb-heavy. No drums, no vocals. Suitable for a paced reading of a sci-fi novel."
+
+2.  **`generation_config` (object):**
+    -   Infer the optimal parameters based on your analysis.
+    -   `bpm` (integer): Beats Per Minute, between 60 and 200.
+    -   `density` (float): Musical note density, between 0.0 and 1.0.
+    -   `brightness` (float): Tonal quality, between 0.0 and 1.0.
+    -   `guidance` (float): Model adherence to the prompt, between 0.0 and 6.0.
+    -   `mute_bass` (boolean): `true` to reduce bass.
+    -   `mute_drums` (boolean): `true` to reduce drums.
+    -   `only_bass_and_drums` (boolean): `true` to attempt to only output bass and drums.
+    -   `music_generation_mode` (string): Must be one of "QUALITY", "DIVERSITY", or "VOCALIZATION".
+    -   `scale` (string): The musical scale. Must be one of the following enum values:
+        - "C_MAJOR_A_MINOR"
+        - "D_FLAT_MAJOR_B_FLAT_MINOR"
+        - "D_MAJOR_B_MINOR"
+        - "E_FLAT_MAJOR_C_MINOR"
+        - "E_MAJOR_D_FLAT_MINOR"
+        - "F_MAJOR_D_MINOR"
+        - "G_FLAT_MAJOR_E_FLAT_MINOR"
+        - "G_MAJOR_E_MINOR"
+        - "A_FLAT_MAJOR_F_MINOR"
+        - "A_MAJOR_G_FLAT_MINOR"
+        - "B_FLAT_MAJOR_G_MINOR"
+        - "B_MAJOR_A_FLAT_MINOR"
+        - "SCALE_UNSPECIFIED"
 
 **You MUST output a single, valid JSON object and nothing else.**
 """
