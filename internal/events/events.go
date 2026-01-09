@@ -32,6 +32,8 @@ package events
 
 import "time"
 
+const NoSoundscapeDirective = "[DO NOT GENERATE SOUNDSCAPE]"
+
 // EventHeader contains metadata common to all events.
 type EventHeader struct {
 	Timestamp  time.Time `json:"Timestamp"`
@@ -41,13 +43,26 @@ type EventHeader struct {
 	EventID    string    `json:"EventID"`
 }
 
+type LyriaGenerationConfig struct {
+	BPM                 int     `json:"bpm,omitempty"`
+	Density             float64 `json:"density,omitempty"`
+	Brightness          float64 `json:"brightness,omitempty"`
+	Guidance            float64 `json:"guidance,omitempty"`
+	MuteBass            bool    `json:"mute_bass,omitempty"`
+	MuteDrums           bool    `json:"mute_drums,omitempty"`
+	OnlyBassAndDrums    bool    `json:"only_bass_and_drums,omitempty"`
+	MusicGenerationMode string  `json:"music_generation_mode,omitempty"`
+	Scale               string  `json:"scale,omitempty"`
+}
+
 type AudioSessionConfig struct {
-	SessionID        string `json:"SessionID"`
-	SourceDocumentID string `json:"SourceDocumentID"`
-	VoiceID          string `json:"VoiceID"`    // The parsed voice name, e.g., "niko"
-	VoiceStyle       string `json:"VoiceStyle"` // The parsed voice style, e.g., "calm, deep, mature"
-	MusicPrompt      string `json:"MusicPrompt"`
-	TextDirective    string `json:"TextDirective"`
+	SessionID        string                 `json:"SessionID"`
+	SourceDocumentID string                 `json:"SourceDocumentID"`
+	VoiceID          string                 `json:"VoiceID"`    // The parsed voice name, e.g., "niko"
+	VoiceStyle       string                 `json:"VoiceStyle"` // The parsed voice style, e.g., "calm, deep, mature"
+	MusicPrompt      string                 `json:"MusicPrompt"`
+	GenerationConfig *LyriaGenerationConfig `json:"GenerationConfig,omitempty"`
+	TextDirective    string                 `json:"TextDirective"`
 }
 
 type JobSettings struct {
