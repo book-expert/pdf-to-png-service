@@ -8,3 +8,6 @@
 
 .gemini/
 gha-creds-*.json
+
+# Gemini CLI auto-generated files
+.github/
