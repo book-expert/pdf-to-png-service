@@ -1,6 +1,10 @@
 module github.com/book-expert/pdf-to-png-service
 
-go 1.25.1
+go 1.25.5
+
+require github.com/niko/common-events v0.0.1
+
+replace github.com/niko/common-events v0.0.1 => ../common-events
 
 require (
 	github.com/book-expert/logger v0.1.4

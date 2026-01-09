@@ -30,18 +30,16 @@ INTERPRETATION (The AI's Resonance):
 
 package events
 
-import "time"
+import (
+	common "github.com/niko/common-events"
+)
+
+// EventHeader is an alias to the canonical definition in common-events.
+// This makes the common type available to other packages in this service
+// that import this local 'events' package.
+type EventHeader = common.EventHeader
 
 const NoSoundscapeDirective = "[DO NOT GENERATE SOUNDSCAPE]"
-
-// EventHeader contains metadata common to all events.
-type EventHeader struct {
-	Timestamp  time.Time `json:"Timestamp"`
-	WorkflowID string    `json:"WorkflowID"`
-	UserID     string    `json:"UserID"`
-	TenantID   string    `json:"TenantID"`
-	EventID    string    `json:"EventID"`
-}
 
 type LyriaGenerationConfig struct {
 	BPM                 int     `json:"bpm,omitempty"`
