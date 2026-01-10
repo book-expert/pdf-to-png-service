@@ -1,89 +1,70 @@
 # PDF-to-PNG Service
 
-## Project Summary
+The **PDF-to-PNG Service** is a high-performance Go microservice that serves as the entry point and intelligence engine for the document processing pipeline. It handles the initial stage of converting PDF documents into a series of high-quality PNG images while simultaneously analyzing the document structure to guide the entire book-to-audio workflow.
 
-A NATS-based microservice that converts PDF files to PNG images.
+## Overview
 
-## Detailed Description
+This service is more than a simple converter; it integrates with Google Gemini to perform "Document Analysis" upon upload. It generates a persistent **Master Narration Directive** that instructs subsequent services on how to handle text extraction and synthesis, ensuring a consistent tone and style throughout the process.
 
-This service listens for `pdfs.created` messages on a NATS stream. When a message is received, it downloads the PDF file from a NATS object store, converts each page to a PNG image using Ghostscript, and uploads the images to another NATS object store. For each generated PNG, it publishes a `pngs.created` event.
+## Key Features
 
-This service is a key component in the document processing pipeline, enabling subsequent services to work with images instead of PDF files.
+- **High-Quality Rendering**: Uses Ghostscript to render PDF pages into PNG images at configurable DPI (default: 300).
+- **Document Intelligence (Gemini Integration)**:
+    - Analyzes document context to create tailored "Text Directives" (e.g., "Ignore citations," "Focus on main body").
+    - Generates complex music generation configurations for background soundscapes based on the document's mood and tone.
+- **Advanced Processing**:
+    - **Blank Page Detection**: Automatically skips pages with insufficient content to save processing time and cost.
+    - **Metadata Extraction**: Uses `pdfinfo` to accurately determine document properties and page counts.
+- **Event-Driven Workflow**: Consumes `pdfs.created` events and produces `pngs.created` events for each valid page.
+- **Robust Storage**: Integrates with NATS Object Store for retrieving source PDFs and storing resulting PNGs.
 
-Core capabilities include:
+## Requirements
 
--   **Document Analysis (LLM Integration)**: Analyzes the PDF content and user preferences (Style, Pace, etc.) using Gemini to generate a persistent "Master Narration Directive" that guides the tone of the entire audiobook.
--   **NATS Integration**: Seamlessly integrates with NATS for messaging and object storage.
--   **Concurrent Processing**: Utilizes concurrent workers to accelerate the conversion process.
--   **High-Quality Rendering**: Renders each PDF page as a PNG image with configurable DPI using Ghostscript.
--   **Integrated Blank Page Detection**: Automatically detects and skips blank pages during processing.
--   **Robust Error Handling**: Implements `ack`, `nak`, and `term` logic for handling NATS messages and DLQ support.
-
-## Technology Stack
-
--   **Programming Language:** Go
--   **Messaging:** NATS JetStream
--   **Dependencies:**
-    -   `ghostscript`: For PDF rendering.
-    -   `poppler-utils` (specifically `pdfinfo`): For page counting.
+- Go 1.25.5+
+- NATS Server with JetStream enabled
+- **Ghostscript** (`gs`): Required for PDF-to-Image conversion.
+- **Poppler Utils** (`pdfinfo`): Required for document analysis.
+- **Gemini API Key**: Required for document intelligence features.
 
 ## Configuration
 
-The service is configured via a local `project.toml` file.
+The service is configured via `project.toml`. Key areas include:
 
-```toml
-[service]
-log_dir = "./logs"
-workers = 4
-dpi = 300
-blank_fuzz_percent = 5
-blank_non_white_threshold = 0.005
+- `[service]`: Worker count, DPI settings, and blank page detection thresholds.
+- `[llm]`: Model settings (e.g., `gemini-2.5-flash`) and prompts for generating directives and music configurations.
+- `[nats]`: Stream, subject, and object store bucket configurations.
 
-[nats]
-url = "nats://192.168.122.102:4222" # Adjust to your NATS server
-dlq_subject = "pdf-to-png.dlq"
+## Getting Started
 
-[nats.consumer]
-stream = "PDFS"
-subject = "pdfs.created"
-durable = "pdf-to-png-durable"
-
-[nats.producer]
-stream = "PNGS"
-subject = "pngs.created"
-
-[nats.object_store]
-pdf_bucket = "PDF_FILES"
-png_bucket = "PNG_FILES"
-```
-
-## Prerequisites
-
-Ensure the following system dependencies are installed:
-
--   **Ghostscript** (`ghostscript`)
--   **Poppler Utils** (`poppler-utils` on Debian/Ubuntu, `poppler-utils` on Fedora/RHEL)
-
-## Usage
-
-To run the service:
+### Installation
 
 ```bash
-make run
-# OR
-go run cmd/main.go
+make install
 ```
 
-## Development
+### Building
 
-To build the service:
 ```bash
 make build
 ```
 
-To run linting:
+### Running
+
 ```bash
-make lint
+make run
 ```
 
+## Internal Architecture
 
+- `cmd/pdf-to-png-service`: Application initialization and NATS consumer loop.
+- `internal/analyzer`: Gemini-powered logic for generating text and music directives.
+- `internal/converter`: Ghostscript wrapper for PDF rendering.
+- `internal/processor`: Orchestrates the download, conversion, analysis, and upload flow.
+
+## Events
+
+### Consumes
+- `pdfs.created`: Triggered when a new PDF is uploaded to the system.
+
+### Produces
+- `pngs.created`: Triggered for every successfully rendered PNG page. Includes the Master Narration Directive and Music Configuration in the metadata.
