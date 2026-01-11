@@ -98,9 +98,9 @@ func run(parentContext context.Context, configuration *config.Config, appLogger 
 	}
 
 	// 2. Setup NATS
-	natsConnection, jetStream, consumer, natsError := setupNATS(parentContext, configuration)
-	if natsError != nil {
-		return natsError
+	natsConnection, jetStreamContext, consumer, natsSetupError := setupNATS(parentContext, configuration)
+	if natsSetupError != nil {
+		return natsSetupError
 	}
 	defer natsConnection.Close()
 
@@ -110,7 +110,7 @@ func run(parentContext context.Context, configuration *config.Config, appLogger 
 	)
 
 	// 3. Start Processing Loop
-	return processMessages(parentContext, consumer, jetStream, configuration, analyzerInstance, appLogger)
+	return processMessages(parentContext, consumer, jetStreamContext, configuration, analyzerInstance, appLogger)
 }
 
 // setupNATS initializes NATS connection and JetStream consumer.
@@ -120,44 +120,44 @@ func setupNATS(parentContext context.Context, configuration *config.Config) (*na
 		return nil, nil, nil, connectionError
 	}
 
-	jetStream, jetStreamError := jetstream.New(natsConnection)
+	jetStreamContext, jetStreamError := jetstream.New(natsConnection)
 	if jetStreamError != nil {
 		return nil, nil, nil, jetStreamError
 	}
 
 	// Ensure the Consumer stream exists
-	_, streamError := jetStream.Stream(parentContext, configuration.NATS.Consumer.Stream)
-	if streamError != nil {
-		_, createStreamError := jetStream.CreateStream(parentContext, jetstream.StreamConfig{
+	_, streamLookupError := jetStreamContext.Stream(parentContext, configuration.NATS.Consumer.Stream)
+	if streamLookupError != nil {
+		_, streamCreationError := jetStreamContext.CreateStream(parentContext, jetstream.StreamConfig{
 			Name:     configuration.NATS.Consumer.Stream,
-			Subjects: []string{configuration.NATS.Consumer.Stream + ".*"},
+			Subjects: []string{strings.ToLower(configuration.NATS.Consumer.Stream) + ".*"},
 			Storage:  jetstream.FileStorage,
 		})
-		if createStreamError != nil {
-			_, retryStreamError := jetStream.Stream(parentContext, configuration.NATS.Consumer.Stream)
+		if streamCreationError != nil {
+			_, retryStreamError := jetStreamContext.Stream(parentContext, configuration.NATS.Consumer.Stream)
 			if retryStreamError != nil {
-				return nil, nil, nil, createStreamError
+				return nil, nil, nil, streamCreationError
 			}
 		}
 	}
 
 	// Ensure the Producer stream exists
-	_, streamError = jetStream.Stream(parentContext, configuration.NATS.Producer.Stream)
-	if streamError != nil {
-		_, createStreamError := jetStream.CreateStream(parentContext, jetstream.StreamConfig{
+	_, producerLookupError := jetStreamContext.Stream(parentContext, configuration.NATS.Producer.Stream)
+	if producerLookupError != nil {
+		_, producerCreationError := jetStreamContext.CreateStream(parentContext, jetstream.StreamConfig{
 			Name:     configuration.NATS.Producer.Stream,
-			Subjects: []string{configuration.NATS.Producer.Stream + ".*"},
+			Subjects: []string{strings.ToLower(configuration.NATS.Producer.Stream) + ".*"},
 			Storage:  jetstream.FileStorage,
 		})
-		if createStreamError != nil {
-			_, retryStreamError := jetStream.Stream(parentContext, configuration.NATS.Producer.Stream)
-			if retryStreamError != nil {
-				return nil, nil, nil, createStreamError
+		if producerCreationError != nil {
+			_, retryProducerError := jetStreamContext.Stream(parentContext, configuration.NATS.Producer.Stream)
+			if retryProducerError != nil {
+				return nil, nil, nil, producerCreationError
 			}
 		}
 	}
 
-	consumer, consumerError := jetStream.CreateOrUpdateConsumer(parentContext, configuration.NATS.Consumer.Stream, jetstream.ConsumerConfig{
+	consumer, consumerError := jetStreamContext.CreateOrUpdateConsumer(parentContext, configuration.NATS.Consumer.Stream, jetstream.ConsumerConfig{
 		Durable:       configuration.NATS.Consumer.Durable,
 		FilterSubject: configuration.NATS.Consumer.Subject,
 		AckPolicy:     jetstream.AckExplicitPolicy,
@@ -167,21 +167,21 @@ func setupNATS(parentContext context.Context, configuration *config.Config) (*na
 		return nil, nil, nil, consumerError
 	}
 
-	return natsConnection, jetStream, consumer, nil
+	return natsConnection, jetStreamContext, consumer, nil
 }
 
 // processMessages implements the core worker loop.
 func processMessages(
 	parentContext context.Context,
 	consumer jetstream.Consumer,
-	jetStream jetstream.JetStream,
+	jetStreamContext jetstream.JetStream,
 	configuration *config.Config,
 	analyzerInstance *analyzer.Analyzer,
 	appLogger *logger.Logger,
 ) error {
 	pdfStore, pngStore, storeError := getObjectStores(
 		parentContext,
-		jetStream,
+		jetStreamContext,
 		configuration.NATS.ObjectStore.PDFBucket,
 		configuration.NATS.ObjectStore.PNGBucket,
 	)
@@ -205,7 +205,7 @@ func processMessages(
 		}
 
 		for message := range batch.Messages() {
-			handleMessage(parentContext, message, jetStream, pdfStore, pngStore, analyzerInstance, configuration, appLogger)
+			handleMessage(parentContext, message, jetStreamContext, pdfStore, pngStore, analyzerInstance, configuration, appLogger)
 		}
 	}
 }
@@ -213,14 +213,14 @@ func processMessages(
 // getObjectStores retrieves the object stores for PDFs and PNGs, creating them if they don't exist.
 func getObjectStores(
 	parentContext context.Context,
-	jetStream jetstream.JetStream,
+	jetStreamContext jetstream.JetStream,
 	pdfBucket, pngBucket string,
 ) (pdfStore, pngStore jetstream.ObjectStore, finalError error) {
 	var pdfBindError error
-	pdfStore, pdfBindError = jetStream.ObjectStore(parentContext, pdfBucket)
+	pdfStore, pdfBindError = jetStreamContext.ObjectStore(parentContext, pdfBucket)
 	if pdfBindError != nil {
 		var createError error
-		pdfStore, createError = jetStream.CreateObjectStore(parentContext, jetstream.ObjectStoreConfig{
+		pdfStore, createError = jetStreamContext.CreateObjectStore(parentContext, jetstream.ObjectStoreConfig{
 			Bucket: pdfBucket,
 		})
 		if createError != nil {
@@ -229,10 +229,10 @@ func getObjectStores(
 	}
 
 	var pngBindError error
-	pngStore, pngBindError = jetStream.ObjectStore(parentContext, pngBucket)
+	pngStore, pngBindError = jetStreamContext.ObjectStore(parentContext, pngBucket)
 	if pngBindError != nil {
 		var createError error
-		pngStore, createError = jetStream.CreateObjectStore(parentContext, jetstream.ObjectStoreConfig{
+		pngStore, createError = jetStreamContext.CreateObjectStore(parentContext, jetstream.ObjectStoreConfig{
 			Bucket: pngBucket,
 		})
 		if createError != nil {
@@ -245,13 +245,13 @@ func getObjectStores(
 
 // handleMessage processes a single message.
 func handleMessage(
-	parentContext context.Context, message jetstream.Msg, jetStream jetstream.JetStream,
+	parentContext context.Context, jetStreamMessage jetstream.Msg, jetStreamContext jetstream.JetStream,
 	pdfStore, pngStore jetstream.ObjectStore, analyzerInstance *analyzer.Analyzer, configuration *config.Config, appLogger *logger.Logger,
 ) {
-	currentJob, jobInitError := newJob(message, jetStream, pdfStore, pngStore, analyzerInstance, configuration, appLogger)
+	currentJob, jobInitError := newJob(jetStreamMessage, jetStreamContext, pdfStore, pngStore, analyzerInstance, configuration, appLogger)
 	if jobInitError != nil {
 		appLogger.Errorf("Failed to create job: %v", jobInitError)
-		if nakError := message.Nak(); nakError != nil {
+		if nakError := jetStreamMessage.Nak(); nakError != nil {
 			appLogger.Errorf("Failed to NAK message: %v", nakError)
 		}
 		return
@@ -262,21 +262,21 @@ func handleMessage(
 
 // newJob creates a new job handler.
 func newJob(
-	message jetstream.Msg,
-	jetStream jetstream.JetStream,
+	jetStreamMessage jetstream.Msg,
+	jetStreamContext jetstream.JetStream,
 	pdfStore, pngStore jetstream.ObjectStore,
 	analyzerInstance *analyzer.Analyzer,
 	configuration *config.Config,
 	appLogger *logger.Logger,
 ) (*processingJob, error) {
 	var event events.PDFCreatedEvent
-	if unmarshalError := json.Unmarshal(message.Data(), &event); unmarshalError != nil {
+	if unmarshalError := json.Unmarshal(jetStreamMessage.Data(), &event); unmarshalError != nil {
 		return nil, unmarshalError
 	}
 
 	return &processingJob{
-			message:       message,
-			jetStream:     jetStream,
+			message:       jetStreamMessage,
+			jetStream:     jetStreamContext,
 			pdfStore:      pdfStore,
 			pngStore:      pngStore,
 			analyzer:      analyzerInstance,
