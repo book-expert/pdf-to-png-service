@@ -7,6 +7,7 @@ require github.com/book-expert/common-events v0.0.1
 replace github.com/book-expert/common-events v0.0.1 => ../common-events
 
 require (
+	github.com/book-expert/common-worker v0.0.1
 	github.com/book-expert/logger v0.1.4
 	github.com/google/uuid v1.6.0
 	github.com/nats-io/nats.go v1.46.1
@@ -35,3 +36,5 @@ require (
 	google.golang.org/grpc v1.66.2 // indirect
 	google.golang.org/protobuf v1.34.2 // indirect
 )
+
+replace github.com/book-expert/common-worker v0.0.1 => ../common-worker
