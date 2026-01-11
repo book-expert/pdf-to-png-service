@@ -7,12 +7,13 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
-	"html/template"
 	"io"
 	"os"
 	"strings"
+	"text/template"
 	"time"
 
+	events "github.com/book-expert/common-events"
 	"github.com/book-expert/logger"
 	"google.golang.org/genai"
 )
@@ -26,9 +27,9 @@ type Config struct {
 }
 
 type Analyzer struct {
-	client *genai.Client
-	configuration    Config
-	logger *logger.Logger
+	client        *genai.Client
+	configuration Config
+	logger        *logger.Logger
 }
 
 func New(parentContext context.Context, configuration Config, logger *logger.Logger) (*Analyzer, error) {
@@ -40,9 +41,9 @@ func New(parentContext context.Context, configuration Config, logger *logger.Log
 	}
 
 	return &Analyzer{
-		client: client,
-		configuration:    configuration,
-		logger: logger,
+		client:        client,
+		configuration: configuration,
+		logger:        logger,
 	}, nil
 }
 
@@ -55,21 +56,9 @@ type AnalysisInput struct {
 	VoiceTrait         string
 }
 
-type LyriaParams struct {
-	BPM                 int     `json:"bpm,omitempty"`
-	Density             float64 `json:"density,omitempty"`
-	Brightness          float64 `json:"brightness,omitempty"`
-	Guidance            float64 `json:"guidance,omitempty"`
-	MuteBass            bool    `json:"mute_bass,omitempty"`
-	MuteDrums           bool    `json:"mute_drums,omitempty"`
-	OnlyBassAndDrums    bool    `json:"only_bass_and_drums,omitempty"`
-	MusicGenerationMode string  `json:"music_generation_mode,omitempty"`
-	Scale               string  `json:"scale,omitempty"`
-}
-
 type MusicAnalysisResponse struct {
-	MusicPrompt      string      `json:"music_prompt"`
-	GenerationConfig LyriaParams `json:"generation_config"`
+	MusicPrompt      string                       `json:"music_prompt"`
+	GenerationConfig events.LyriaGenerationConfig `json:"generation_config"`
 }
 
 // GenerateTextDirective analyzes the PDF and returns a plain text string of instructions.

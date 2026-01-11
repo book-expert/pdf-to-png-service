@@ -47,16 +47,21 @@ type Config struct {
 
 // Load reads and parses the project.toml file.
 func Load(path string) (*Config, error) {
-	file, openError := os.Open(path)
-	if openError != nil {
-		return nil, openError
+	file, error := os.Open(path)
+	if error != nil {
+		return nil, error
 	}
 	defer func() { _ = file.Close() }()
 
 	var configuration Config
 	decoder := toml.NewDecoder(file)
-	if decodeError := decoder.Decode(&configuration); decodeError != nil {
-		return nil, decodeError
+	if error := decoder.Decode(&configuration); error != nil {
+		return nil, error
+	}
+
+	// Apply Environment Overrides
+	if natsURL := os.Getenv("NATS_URL"); natsURL != "" {
+		configuration.NATS.URL = natsURL
 	}
 
 	return &configuration, nil

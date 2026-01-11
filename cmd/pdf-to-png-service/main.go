@@ -26,8 +26,8 @@ import (
 	"github.com/nats-io/nats.go/jetstream"
 )
 
-// job represents the context for processing a single message.
-type job struct {
+// processingJob represents the context for processing a single message.
+type processingJob struct {
 	message       jetstream.Msg
 	jetStream     jetstream.JetStream
 	pdfStore      jetstream.ObjectStore
@@ -128,15 +128,15 @@ func setupNATS(parentContext context.Context, configuration *config.Config) (*na
 	// Ensure the Consumer stream exists
 	_, streamError := jetStream.Stream(parentContext, configuration.NATS.Consumer.Stream)
 	if streamError != nil {
-		_, createError := jetStream.CreateStream(parentContext, jetstream.StreamConfig{
+		_, createStreamError := jetStream.CreateStream(parentContext, jetstream.StreamConfig{
 			Name:     configuration.NATS.Consumer.Stream,
 			Subjects: []string{configuration.NATS.Consumer.Stream + ".*"},
 			Storage:  jetstream.FileStorage,
 		})
-		if createError != nil {
-			_, retryError := jetStream.Stream(parentContext, configuration.NATS.Consumer.Stream)
-			if retryError != nil {
-				return nil, nil, nil, createError
+		if createStreamError != nil {
+			_, retryStreamError := jetStream.Stream(parentContext, configuration.NATS.Consumer.Stream)
+			if retryStreamError != nil {
+				return nil, nil, nil, createStreamError
 			}
 		}
 	}
@@ -144,15 +144,15 @@ func setupNATS(parentContext context.Context, configuration *config.Config) (*na
 	// Ensure the Producer stream exists
 	_, streamError = jetStream.Stream(parentContext, configuration.NATS.Producer.Stream)
 	if streamError != nil {
-		_, createError := jetStream.CreateStream(parentContext, jetstream.StreamConfig{
+		_, createStreamError := jetStream.CreateStream(parentContext, jetstream.StreamConfig{
 			Name:     configuration.NATS.Producer.Stream,
 			Subjects: []string{configuration.NATS.Producer.Stream + ".*"},
 			Storage:  jetstream.FileStorage,
 		})
-		if createError != nil {
-			_, retryError := jetStream.Stream(parentContext, configuration.NATS.Producer.Stream)
-			if retryError != nil {
-				return nil, nil, nil, createError
+		if createStreamError != nil {
+			_, retryStreamError := jetStream.Stream(parentContext, configuration.NATS.Producer.Stream)
+			if retryStreamError != nil {
+				return nil, nil, nil, createStreamError
 			}
 		}
 	}
@@ -176,7 +176,7 @@ func processMessages(
 	consumer jetstream.Consumer,
 	jetStream jetstream.JetStream,
 	configuration *config.Config,
-	analyzer *analyzer.Analyzer,
+	analyzerInstance *analyzer.Analyzer,
 	appLogger *logger.Logger,
 ) error {
 	pdfStore, pngStore, storeError := getObjectStores(
@@ -205,7 +205,7 @@ func processMessages(
 		}
 
 		for message := range batch.Messages() {
-			handleMessage(parentContext, message, jetStream, pdfStore, pngStore, analyzer, configuration, appLogger)
+			handleMessage(parentContext, message, jetStream, pdfStore, pngStore, analyzerInstance, configuration, appLogger)
 		}
 	}
 }
@@ -246,9 +246,9 @@ func getObjectStores(
 // handleMessage processes a single message.
 func handleMessage(
 	parentContext context.Context, message jetstream.Msg, jetStream jetstream.JetStream,
-	pdfStore, pngStore jetstream.ObjectStore, analyzer *analyzer.Analyzer, configuration *config.Config, appLogger *logger.Logger,
+	pdfStore, pngStore jetstream.ObjectStore, analyzerInstance *analyzer.Analyzer, configuration *config.Config, appLogger *logger.Logger,
 ) {
-	processingJob, jobInitError := newJob(message, jetStream, pdfStore, pngStore, analyzer, configuration, appLogger)
+	currentJob, jobInitError := newJob(message, jetStream, pdfStore, pngStore, analyzerInstance, configuration, appLogger)
 	if jobInitError != nil {
 		appLogger.Errorf("Failed to create job: %v", jobInitError)
 		if nakError := message.Nak(); nakError != nil {
@@ -257,7 +257,7 @@ func handleMessage(
 		return
 	}
 
-	processingJob.run(parentContext)
+	currentJob.run(parentContext)
 }
 
 // newJob creates a new job handler.
@@ -265,21 +265,21 @@ func newJob(
 	message jetstream.Msg,
 	jetStream jetstream.JetStream,
 	pdfStore, pngStore jetstream.ObjectStore,
-	analyzer *analyzer.Analyzer,
+	analyzerInstance *analyzer.Analyzer,
 	configuration *config.Config,
 	appLogger *logger.Logger,
-) (*job, error) {
+) (*processingJob, error) {
 	var event events.PDFCreatedEvent
 	if unmarshalError := json.Unmarshal(message.Data(), &event); unmarshalError != nil {
 		return nil, unmarshalError
 	}
 
-	return &job{
+	return &processingJob{
 			message:       message,
 			jetStream:     jetStream,
 			pdfStore:      pdfStore,
 			pngStore:      pngStore,
-			analyzer:      analyzer,
+			analyzer:      analyzerInstance,
 			configuration: configuration,
 			appLogger:     appLogger,
 			event:         &event,
@@ -289,81 +289,81 @@ func newJob(
 }
 
 // executeProcessingSteps runs the core logic of the job.
-func (processingJob *job) run(parentContext context.Context) {
-	processingJob.appLogger.Infof("Processing PDF: %s", processingJob.event.PDFKey)
-	if inProgressError := processingJob.message.InProgress(); inProgressError != nil {
-		processingJob.appLogger.Warnf("Failed to send InProgress: %v", inProgressError)
+func (job *processingJob) run(parentContext context.Context) {
+	job.appLogger.Infof("Processing PDF: %s", job.event.PDFKey)
+	if inProgressError := job.message.InProgress(); inProgressError != nil {
+		job.appLogger.Warnf("Failed to send InProgress: %v", inProgressError)
 	}
 
 	// Publish PDFProcessingStartedEvent for Bridge Service
-	if processingJob.configuration.NATS.Producer.PDFProcessingStartedSubject != "" {
+	if job.configuration.NATS.Producer.PDFProcessingStartedSubject != "" {
 		startedEvent := events.PDFProcessingStartedEvent{
-			Header: *processingJob.header,
+			Header: *job.header,
 		}
 		data, _ := json.Marshal(startedEvent)
-		if _, publishError := processingJob.jetStream.Publish(parentContext, processingJob.configuration.NATS.Producer.PDFProcessingStartedSubject, data); publishError != nil {
-			processingJob.appLogger.Warnf("Failed to publish processing started event: %v", publishError)
+		if _, publishError := job.jetStream.Publish(parentContext, job.configuration.NATS.Producer.PDFProcessingStartedSubject, data); publishError != nil {
+			job.appLogger.Warnf("Failed to publish processing started event: %v", publishError)
 		}
 	}
 
-	if downloadError := processingJob.downloadPDF(parentContext); downloadError != nil {
-		processingJob.appLogger.Errorf("Download failed: %v", downloadError)
-		if nakError := processingJob.message.Nak(); nakError != nil {
-			processingJob.appLogger.Errorf("Failed to NAK after download fail: %v", nakError)
+	if downloadError := job.downloadPDF(parentContext); downloadError != nil {
+		job.appLogger.Errorf("Download failed: %v", downloadError)
+		if nakError := job.message.Nak(); nakError != nil {
+			job.appLogger.Errorf("Failed to NAK after download fail: %v", nakError)
 		}
 		return
 	}
 
 	// Analysis Step
-	if analysisError := processingJob.analyzePDF(parentContext); analysisError != nil {
-		processingJob.appLogger.Errorf("Analysis failed: %v", analysisError)
-		if _, publishError := processingJob.jetStream.Publish(parentContext, processingJob.configuration.NATS.DLQSubject, processingJob.message.Data()); publishError != nil {
-			processingJob.appLogger.Errorf("Failed to publish to DLQ: %v", publishError)
+	if analysisError := job.analyzePDF(parentContext); analysisError != nil {
+		job.appLogger.Errorf("Analysis failed: %v", analysisError)
+		if _, publishError := job.jetStream.Publish(parentContext, job.configuration.NATS.DLQSubject, job.message.Data()); publishError != nil {
+			job.appLogger.Errorf("Failed to publish to DLQ: %v", publishError)
 		}
-		if terminalError := processingJob.message.Term(); terminalError != nil {
-			processingJob.appLogger.Errorf("Failed to Term message: %v", terminalError)
-		}
-		return
-	}
-
-	if processingError := processingJob.processPDF(parentContext); processingError != nil {
-		processingJob.appLogger.Errorf("Processing failed: %v", processingError)
-		if _, publishError := processingJob.jetStream.Publish(parentContext, processingJob.configuration.NATS.DLQSubject, processingJob.message.Data()); publishError != nil {
-			processingJob.appLogger.Errorf("Failed to publish to DLQ: %v", publishError)
-		}
-		if terminalError := processingJob.message.Term(); terminalError != nil {
-			processingJob.appLogger.Errorf("Failed to Term message: %v", terminalError)
+		if terminalError := job.message.Term(); terminalError != nil {
+			job.appLogger.Errorf("Failed to Term message: %v", terminalError)
 		}
 		return
 	}
 
-	if publishError := processingJob.publishPNGs(parentContext); publishError != nil {
-		processingJob.appLogger.Errorf("Publish failed: %v", publishError)
-		if nakError := processingJob.message.Nak(); nakError != nil {
-			processingJob.appLogger.Errorf("Failed to NAK after publish fail: %v", nakError)
+	if processingError := job.processPDF(parentContext); processingError != nil {
+		job.appLogger.Errorf("Processing failed: %v", processingError)
+		if _, publishError := job.jetStream.Publish(parentContext, job.configuration.NATS.DLQSubject, job.message.Data()); publishError != nil {
+			job.appLogger.Errorf("Failed to publish to DLQ: %v", publishError)
+		}
+		if terminalError := job.message.Term(); terminalError != nil {
+			job.appLogger.Errorf("Failed to Term message: %v", terminalError)
 		}
 		return
 	}
 
-	if acknowledgeError := processingJob.message.Ack(); acknowledgeError != nil {
-		processingJob.appLogger.Errorf("Failed to ACK message: %v", acknowledgeError)
+	if publishError := job.publishPNGs(parentContext); publishError != nil {
+		job.appLogger.Errorf("Publish failed: %v", publishError)
+		if nakError := job.message.Nak(); nakError != nil {
+			job.appLogger.Errorf("Failed to NAK after publish fail: %v", nakError)
+		}
+		return
 	}
-	processingJob.appLogger.Successf("Completed: %s", processingJob.event.PDFKey)
+
+	if acknowledgeError := job.message.Ack(); acknowledgeError != nil {
+		job.appLogger.Errorf("Failed to ACK message: %v", acknowledgeError)
+	}
+	job.appLogger.Successf("Completed: %s", job.event.PDFKey)
 }
 
-func (processingJob *job) downloadPDF(parentContext context.Context) error {
-	object, getError := processingJob.pdfStore.Get(parentContext, processingJob.event.PDFKey)
+func (job *processingJob) downloadPDF(parentContext context.Context) error {
+	object, getError := job.pdfStore.Get(parentContext, job.event.PDFKey)
 	if getError != nil {
 		return getError
 	}
 	defer func() {
 		if closeError := object.Close(); closeError != nil {
-			processingJob.appLogger.Warnf("Failed to close object store object: %v", closeError)
+			job.appLogger.Warnf("Failed to close object store object: %v", closeError)
 		}
 	}()
 
 	var readError error
-	processingJob.pdfData, readError = io.ReadAll(object)
+	job.pdfData, readError = io.ReadAll(object)
 	return readError
 }
 
@@ -377,22 +377,22 @@ func parseVoice(voice string) (voiceID, voiceStyle string) {
 	return strings.TrimSpace(voice), ""
 }
 
-func (processingJob *job) analyzePDF(parentContext context.Context) error {
-	processingJob.appLogger.Infof("Analyzing PDF for Narration Directive...")
+func (job *processingJob) analyzePDF(parentContext context.Context) error {
+	job.appLogger.Infof("Analyzing PDF for Narration Directive...")
 
 	// 1. Initialize inputs and parse voice string.
 	input := analyzer.AnalysisInput{}
 	var voiceID, voiceStyle, voiceTrait string
 
-	if processingJob.event.Settings != nil {
-		input.SoundscapePrompt = processingJob.event.Settings.SoundscapePrompt
-		input.AugmentationPrompt = processingJob.event.Settings.AugmentationPrompt
-		input.Exclusions = processingJob.event.Settings.Exclusions
-		if processingJob.event.Settings.Voice != "" {
-			voiceID, voiceStyle = parseVoice(processingJob.event.Settings.Voice)
+	if job.event.Settings != nil {
+		input.SoundscapePrompt = job.event.Settings.SoundscapePrompt
+		input.AugmentationPrompt = job.event.Settings.AugmentationPrompt
+		input.Exclusions = job.event.Settings.Exclusions
+		if job.event.Settings.Voice != "" {
+			voiceID, voiceStyle = parseVoice(job.event.Settings.Voice)
 
 			// Look up the trait from the config, fallback to "unknown"
-			if trait, ok := processingJob.configuration.Voices[voiceID]; ok {
+			if trait, ok := job.configuration.Voices[voiceID]; ok {
 				voiceTrait = trait
 			} else {
 				voiceTrait = "unknown"
@@ -408,10 +408,10 @@ func (processingJob *job) analyzePDF(parentContext context.Context) error {
 			input.VoiceTrait = voiceTrait
 		}
 	}
-	processingJob.appLogger.Infof("Parsed voice. ID: '%s', Style: '%s', Trait: '%s'", voiceID, voiceStyle, voiceTrait)
+	job.appLogger.Infof("Parsed voice. ID: '%s', Style: '%s', Trait: '%s'", voiceID, voiceStyle, voiceTrait)
 
 	// 2. Generate Text Directive (Always required for extraction)
-	textDirective, textDirectiveError := processingJob.analyzer.GenerateTextDirective(parentContext, processingJob.pdfData, input)
+	textDirective, textDirectiveError := job.analyzer.GenerateTextDirective(parentContext, job.pdfData, input)
 	if textDirectiveError != nil {
 		return textDirectiveError
 	}
@@ -420,26 +420,26 @@ func (processingJob *job) analyzePDF(parentContext context.Context) error {
 	var musicPrompt string
 	var generationConfig *events.LyriaGenerationConfig
 
-	if processingJob.event.Settings.SoundscapePrompt == "" {
+	if job.event.Settings.SoundscapePrompt == "" {
 		musicPrompt = events.NoSoundscapeDirective
-		processingJob.appLogger.Infof("Empty SoundscapePrompt from user. Setting MusicPrompt to '%s'.", musicPrompt)
+		job.appLogger.Infof("Empty SoundscapePrompt from user. Setting MusicPrompt to '%s'.", musicPrompt)
 	} else {
-		musicResponse, musicAnalysisError := processingJob.analyzer.GenerateMusicConfig(parentContext, processingJob.pdfData, input)
+		musicResponse, musicAnalysisError := job.analyzer.GenerateMusicConfig(parentContext, job.pdfData, input)
 		if musicAnalysisError != nil {
 			// RESILIENCE: Music failure is non-fatal for text extraction.
-			processingJob.appLogger.Warnf("Music configuration analysis failed: %v. Proceeding without soundscape.", musicAnalysisError)
+			job.appLogger.Warnf("Music configuration analysis failed: %v. Proceeding without soundscape.", musicAnalysisError)
 			musicPrompt = events.NoSoundscapeDirective
 		} else {
 			musicPrompt = musicResponse.MusicPrompt
 			generationConfig = &musicResponse.GenerationConfig
-			processingJob.appLogger.Infof("Music Configuration generated successfully.")
+			job.appLogger.Infof("Music Configuration generated successfully.")
 		}
 	}
 
 	// 4. Create the comprehensive AudioSessionConfig.
 	audioConfig := &events.AudioSessionConfig{
 		SessionID:        uuid.New().String(),
-		SourceDocumentID: processingJob.event.PDFKey,
+		SourceDocumentID: job.event.PDFKey,
 		VoiceID:          voiceID,
 		VoiceStyle:       voiceStyle,
 		MusicPrompt:      musicPrompt,
@@ -448,59 +448,59 @@ func (processingJob *job) analyzePDF(parentContext context.Context) error {
 	}
 
 	// 5. Update the event settings with the new config.
-	if processingJob.event.Settings == nil {
-		processingJob.event.Settings = &events.JobSettings{}
+	if job.event.Settings == nil {
+		job.event.Settings = &events.JobSettings{}
 	}
-	processingJob.event.Settings.AudioSessionConfig = audioConfig
+	job.event.Settings.AudioSessionConfig = audioConfig
 
 	return nil
 }
 
-func (processingJob *job) processPDF(parentContext context.Context) error {
+func (job *processingJob) processPDF(parentContext context.Context) error {
 	options := &pdfrender.Options{
-		DPI:                    processingJob.configuration.Service.DPI,
-		Workers:                processingJob.configuration.Service.Workers,
-		BlankFuzzPercent:       processingJob.configuration.Service.BlankFuzzPercent,
-		BlankNonWhiteThreshold: processingJob.configuration.Service.BlankNonWhiteThreshold,
+		DPI:                    job.configuration.Service.DPI,
+		Workers:                job.configuration.Service.Workers,
+		BlankFuzzPercent:       job.configuration.Service.BlankFuzzPercent,
+		BlankNonWhiteThreshold: job.configuration.Service.BlankNonWhiteThreshold,
 		ProgressBarOutput:      io.Discard, // Simple logs are enough
 	}
 
 	// Create processor
-	processor := pdfrender.NewProcessor(options, processingJob.appLogger)
+	processor := pdfrender.NewProcessor(options, job.appLogger)
 
-	pngs, renderError := processor.ProcessSinglePDFFromBytes(parentContext, processingJob.pdfData)
+	renderedPNGs, renderError := processor.ProcessSinglePDFFromBytes(parentContext, job.pdfData)
 	if renderError != nil {
 		return renderError
 	}
-	processingJob.pngData = pngs
+	job.pngData = renderedPNGs
 	return nil
 }
 
-func (processingJob *job) publishPNGs(parentContext context.Context) error {
-	totalPages := len(processingJob.pngData)
-	for index, png := range processingJob.pngData {
-		pngKey := fmt.Sprintf("%s-%d.png", processingJob.event.PDFKey, index+1)
+func (job *processingJob) publishPNGs(parentContext context.Context) error {
+	totalPages := len(job.pngData)
+	for index, pngContent := range job.pngData {
+		pngKey := fmt.Sprintf("%s-%d.png", job.event.PDFKey, index+1)
 
-		if _, uploadError := processingJob.pngStore.PutBytes(parentContext, pngKey, png); uploadError != nil {
+		if _, uploadError := job.pngStore.PutBytes(parentContext, pngKey, pngContent); uploadError != nil {
 			return uploadError
 		}
 
 		event := events.PNGCreatedEvent{
 			Header: events.EventHeader{
-				WorkflowID: processingJob.header.WorkflowID,
-				UserID:     processingJob.header.UserID,
-				TenantID:   processingJob.header.TenantID,
+				WorkflowID: job.header.WorkflowID,
+				UserID:     job.header.UserID,
+				TenantID:   job.header.TenantID,
 				EventID:    uuid.New().String(),
 				Timestamp:  time.Now(),
 			},
 			PNGKey:     pngKey,
 			PageNumber: index + 1,
 			TotalPages: totalPages,
-			Settings:   processingJob.event.Settings, // Settings now include the AudioSessionConfig
+			Settings:   job.event.Settings, // Settings now include the AudioSessionConfig
 		}
 
-		data, _ := json.Marshal(event)
-		if _, publishError := processingJob.jetStream.Publish(parentContext, processingJob.configuration.NATS.Producer.Subject, data); publishError != nil {
+		eventData, _ := json.Marshal(event)
+		if _, publishError := job.jetStream.Publish(parentContext, job.configuration.NATS.Producer.Subject, eventData); publishError != nil {
 			return publishError
 		}
 	}
