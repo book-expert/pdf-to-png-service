@@ -127,6 +127,38 @@ func setupNATS(ctx context.Context, cfg *config.Config) (*nats.Conn, jetstream.J
 		return nil, nil, nil, fmt.Errorf("jetstream init: %w", err)
 	}
 
+	// Ensure the Consumer stream exists
+	_, err = js.Stream(ctx, cfg.NATS.Consumer.Stream)
+	if err != nil {
+		_, createErr := js.CreateStream(ctx, jetstream.StreamConfig{
+			Name:     cfg.NATS.Consumer.Stream,
+			Subjects: []string{cfg.NATS.Consumer.Stream + ".*"},
+			Storage:  jetstream.FileStorage,
+		})
+		if createErr != nil {
+			_, retryErr := js.Stream(ctx, cfg.NATS.Consumer.Stream)
+			if retryErr != nil {
+				return nil, nil, nil, fmt.Errorf("failed to ensure consumer stream %s exists: %w", cfg.NATS.Consumer.Stream, createErr)
+			}
+		}
+	}
+
+	// Ensure the Producer stream exists
+	_, err = js.Stream(ctx, cfg.NATS.Producer.Stream)
+	if err != nil {
+		_, createErr := js.CreateStream(ctx, jetstream.StreamConfig{
+			Name:     cfg.NATS.Producer.Stream,
+			Subjects: []string{cfg.NATS.Producer.Stream + ".*"},
+			Storage:  jetstream.FileStorage,
+		})
+		if createErr != nil {
+			_, retryErr := js.Stream(ctx, cfg.NATS.Producer.Stream)
+			if retryErr != nil {
+				return nil, nil, nil, fmt.Errorf("failed to ensure producer stream %s exists: %w", cfg.NATS.Producer.Stream, createErr)
+			}
+		}
+	}
+
 	consumer, err := js.CreateOrUpdateConsumer(ctx, cfg.NATS.Consumer.Stream, jetstream.ConsumerConfig{
 		Durable:       cfg.NATS.Consumer.Durable,
 		FilterSubject: cfg.NATS.Consumer.Subject,
