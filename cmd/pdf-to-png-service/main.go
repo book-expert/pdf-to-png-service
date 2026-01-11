@@ -16,10 +16,10 @@ import (
 	"syscall"
 	"time"
 
+	"github.com/book-expert/common-events"
 	"github.com/book-expert/logger"
 	"github.com/book-expert/pdf-to-png-service/internal/analyzer"
 	"github.com/book-expert/pdf-to-png-service/internal/config"
-	"github.com/book-expert/pdf-to-png-service/internal/events"
 	"github.com/book-expert/pdf-to-png-service/internal/pdfrender"
 	"github.com/google/uuid"
 	"github.com/nats-io/nats.go"
@@ -130,7 +130,7 @@ func setupNATS(parentContext context.Context, configuration *config.Config) (*na
 	if streamLookupError != nil {
 		_, streamCreationError := jetStreamContext.CreateStream(parentContext, jetstream.StreamConfig{
 			Name:     configuration.NATS.Consumer.Stream,
-			Subjects: []string{strings.ToLower(configuration.NATS.Consumer.Stream) + ".*"},
+			Subjects: events.GetStreamSubjects(configuration.NATS.Consumer.Stream),
 			Storage:  jetstream.FileStorage,
 		})
 		if streamCreationError != nil {
@@ -146,7 +146,7 @@ func setupNATS(parentContext context.Context, configuration *config.Config) (*na
 	if producerLookupError != nil {
 		_, producerCreationError := jetStreamContext.CreateStream(parentContext, jetstream.StreamConfig{
 			Name:     configuration.NATS.Producer.Stream,
-			Subjects: []string{strings.ToLower(configuration.NATS.Producer.Stream) + ".*"},
+			Subjects: events.GetStreamSubjects(configuration.NATS.Producer.Stream),
 			Storage:  jetstream.FileStorage,
 		})
 		if producerCreationError != nil {
