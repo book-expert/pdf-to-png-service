@@ -17,12 +17,14 @@ import (
 	"github.com/book-expert/pdf-to-png-service/internal/config"
 	"github.com/book-expert/pdf-to-png-service/internal/pdfrender"
 	"github.com/google/uuid"
+	"github.com/nats-io/nats.go"
 	"github.com/nats-io/nats.go/jetstream"
 )
 
 // Worker coordinates the conversion of PDF documents into PNG images and narration directives.
 type Worker struct {
 	baseWorker      *worker.Worker[*events.PDFCreatedEvent]
+	natsConn        *nats.Conn
 	jetStream       jetstream.JetStream
 	pdfStore        jetstream.ObjectStore
 	pngStore        jetstream.ObjectStore
@@ -36,6 +38,7 @@ type Worker struct {
 
 // New creates a new Worker instance using the common-worker library.
 func New(
+	natsConn *nats.Conn,
 	jetStream jetstream.JetStream,
 	pdfStore jetstream.ObjectStore,
 	pngStore jetstream.ObjectStore,
@@ -48,6 +51,7 @@ func New(
 	workerCount int,
 ) *Worker {
 	pdfWorker := &Worker{
+		natsConn:        natsConn,
 		jetStream:       jetStream,
 		pdfStore:        pdfStore,
 		pngStore:        pngStore,
@@ -67,7 +71,7 @@ func New(
 		MaxDeliver:    3,
 	}
 
-	pdfWorker.baseWorker = worker.New(jetStream, serviceLogger, workerConfig, pdfWorker.handleMessage)
+	pdfWorker.baseWorker = worker.New(natsConn, jetStream, serviceLogger, workerConfig, pdfWorker.handleMessage)
 	return pdfWorker
 }
 

@@ -12,7 +12,6 @@ import (
 	"syscall"
 	"time"
 
-	"github.com/book-expert/common-events"
 	"github.com/book-expert/logger"
 	"github.com/book-expert/pdf-to-png-service/internal/analyzer"
 	"github.com/book-expert/pdf-to-png-service/internal/config"
@@ -84,7 +83,7 @@ func run(parentContext context.Context, configuration *config.Config, appLogger 
 	}
 
 	// 2. Setup NATS Connection
-	natsConnection, jetStreamContext, natsSetupError := setupNATS(parentContext, configuration)
+	natsConnection, jetStreamContext, natsSetupError := setupNATS(configuration)
 	if natsSetupError != nil {
 		return natsSetupError
 	}
@@ -103,6 +102,7 @@ func run(parentContext context.Context, configuration *config.Config, appLogger 
 
 	// 4. Initialize and Start Worker
 	workerInstance := pdfworker.New(
+		natsConnection,
 		jetStreamContext,
 		pdfStore,
 		pngStore,
@@ -118,8 +118,8 @@ func run(parentContext context.Context, configuration *config.Config, appLogger 
 	return workerInstance.Start(parentContext)
 }
 
-// setupNATS initializes NATS connection and ensures required streams exist.
-func setupNATS(parentContext context.Context, configuration *config.Config) (*nats.Conn, jetstream.JetStream, error) {
+// setupNATS initializes NATS connection and JetStream context.
+func setupNATS(configuration *config.Config) (*nats.Conn, jetstream.JetStream, error) {
 	natsConnection, connectionError := nats.Connect(configuration.NATS.URL)
 	if connectionError != nil {
 		return nil, nil, connectionError
@@ -130,36 +130,10 @@ func setupNATS(parentContext context.Context, configuration *config.Config) (*na
 		return nil, nil, jetStreamError
 	}
 
-	// Ensure the Consumer stream exists
-	_, streamLookupError := jetStreamContext.Stream(parentContext, configuration.NATS.Consumer.Stream)
-	if streamLookupError != nil {
-		_, streamCreationError := jetStreamContext.CreateStream(parentContext, jetstream.StreamConfig{
-			Name:     configuration.NATS.Consumer.Stream,
-			Subjects: events.GetStreamSubjects(configuration.NATS.Consumer.Stream),
-			Storage:  jetstream.FileStorage,
-		})
-		if streamCreationError != nil {
-			return nil, nil, streamCreationError
-		}
-	}
-
-	// Ensure the Producer stream exists
-	_, producerLookupError := jetStreamContext.Stream(parentContext, configuration.NATS.Producer.Stream)
-	if producerLookupError != nil {
-		_, producerCreationError := jetStreamContext.CreateStream(parentContext, jetstream.StreamConfig{
-			Name:     configuration.NATS.Producer.Stream,
-			Subjects: events.GetStreamSubjects(configuration.NATS.Producer.Stream),
-			Storage:  jetstream.FileStorage,
-		})
-		if producerCreationError != nil {
-			return nil, nil, producerCreationError
-		}
-	}
-
 	return natsConnection, jetStreamContext, nil
 }
 
-// getObjectStores retrieves the object stores for PDFs and PNGs, creating them if they don't exist.
+// getObjectStores binds to the object stores for PDFs and PNGs.
 func getObjectStores(
 	parentContext context.Context,
 	jetStreamContext jetstream.JetStream,
@@ -168,25 +142,13 @@ func getObjectStores(
 	var pdfBindError error
 	pdfStore, pdfBindError = jetStreamContext.ObjectStore(parentContext, pdfBucket)
 	if pdfBindError != nil {
-		var createError error
-		pdfStore, createError = jetStreamContext.CreateObjectStore(parentContext, jetstream.ObjectStoreConfig{
-			Bucket: pdfBucket,
-		})
-		if createError != nil {
-			return nil, nil, createError
-		}
+		return nil, nil, fmt.Errorf("failed to bind to PDF object store %s: %w", pdfBucket, pdfBindError)
 	}
 
 	var pngBindError error
 	pngStore, pngBindError = jetStreamContext.ObjectStore(parentContext, pngBucket)
 	if pngBindError != nil {
-		var createError error
-		pngStore, createError = jetStreamContext.CreateObjectStore(parentContext, jetstream.ObjectStoreConfig{
-			Bucket: pngBucket,
-		})
-		if createError != nil {
-			return nil, nil, createError
-		}
+		return nil, nil, fmt.Errorf("failed to bind to PNG object store %s: %w", pngBucket, pngBindError)
 	}
 
 	return pdfStore, pngStore, nil
