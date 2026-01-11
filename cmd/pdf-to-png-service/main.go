@@ -431,17 +431,7 @@ func (processingJob *job) analyzePDF(parentContext context.Context) error {
 			musicPrompt = events.NoSoundscapeDirective
 		} else {
 			musicPrompt = musicResponse.MusicPrompt
-			generationConfig = &events.LyriaGenerationConfig{
-				BPM:                 musicResponse.GenerationConfig.BPM,
-				Density:             musicResponse.GenerationConfig.Density,
-				Brightness:          musicResponse.GenerationConfig.Brightness,
-				Guidance:            musicResponse.GenerationConfig.Guidance,
-				MuteBass:            musicResponse.GenerationConfig.MuteBass,
-				MuteDrums:           musicResponse.GenerationConfig.MuteDrums,
-				OnlyBassAndDrums:    musicResponse.GenerationConfig.OnlyBassAndDrums,
-				MusicGenerationMode: musicResponse.GenerationConfig.MusicGenerationMode,
-				Scale:               musicResponse.GenerationConfig.Scale,
-			}
+			generationConfig = &musicResponse.GenerationConfig
 			processingJob.appLogger.Infof("Music Configuration generated successfully.")
 		}
 	}
