@@ -11,3 +11,4 @@ gha-creds-*.json
 
 # Gemini CLI auto-generated files
 .github/
+pdf-to-png-service
