@@ -15,12 +15,11 @@ This service is more than a simple converter; it integrates with Google Gemini t
 - **Advanced Processing**:
     - **Blank Page Detection**: Automatically skips pages with insufficient content to save processing time and cost.
     - **Metadata Extraction**: Uses `pdfinfo` to accurately determine document properties and page counts.
-- **Event-Driven Workflow**: Consumes `pdfs.created` events and produces `pngs.created` events for each valid page.
-- **Robust Storage**: Integrates with NATS Object Store for retrieving source PDFs and storing resulting PNGs.
-
-## Requirements
-
-- Go 1.25.5+
+    - **Event-Driven Workflow**: Consumes `pdfs.created` events and produces `pngs.created` events for each valid page, utilizing the `common-worker` library for reliable processing.
+    - **Robust Storage**: Integrates with NATS Object Store for retrieving source PDFs and storing resulting PNGs.
+    
+    ## Requirements
+    - Go 1.25.5+
 - NATS Server with JetStream enabled
 - **Ghostscript** (`gs`): Required for PDF-to-Image conversion.
 - **Poppler Utils** (`pdfinfo`): Required for document analysis.
@@ -56,10 +55,11 @@ make run
 
 ## Internal Architecture
 
-- `cmd/pdf-to-png-service`: Application initialization and NATS consumer loop.
+- `cmd/pdf-to-png-service`: Application initialization and NATS worker startup.
 - `internal/analyzer`: Gemini-powered logic for generating text and music directives.
-- `internal/converter`: Ghostscript wrapper for PDF rendering.
-- `internal/processor`: Orchestrates the download, conversion, analysis, and upload flow.
+- `internal/pdfrender`: Ghostscript wrapper for high-fidelity PDF rendering.
+- `internal/worker`: Core orchestration logic for the document processing workflow.
+- `internal/config`: Configuration loading and validation.
 
 ## Events
 
