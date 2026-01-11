@@ -103,11 +103,11 @@ func resolvePositiveFloat(value, defaultValue float64) float64 {
 // ProcessSinglePDFFromBytes converts a single PDF file from a byte slice to PNGs.
 //
 // Flow: Get Page Count -> Initialize PageProcessor -> Execute Batch -> Return Images
-func (processor *Processor) ProcessSinglePDFFromBytes(ctx context.Context, pdfData []byte) ([][]byte, error) {
+func (processor *Processor) ProcessSinglePDFFromBytes(parentContext context.Context, pdfData []byte) ([][]byte, error) {
 	// Step 1: Determine the total number of pages in the PDF.
-	pageCount, err := processor.getPDFPageCount(ctx, pdfData)
-	if err != nil {
-		return nil, fmt.Errorf("could not get page count: %w", err)
+	pageCount, error := processor.getPDFPageCount(parentContext, pdfData)
+	if error != nil {
+		return nil, fmt.Errorf("could not get page count: %w", error)
 	}
 
 	if pageCount <= 0 {
@@ -120,24 +120,24 @@ func (processor *Processor) ProcessSinglePDFFromBytes(ctx context.Context, pdfDa
 	// Note: We use the exported NewPageProcessor and ProcessPagesFromBytes from the previous refactor.
 	pageProcessor := NewPageProcessor(processor, "")
 
-	pngImages, err := pageProcessor.ProcessPagesFromBytes(ctx, pdfData, pageCount)
-	if err != nil {
-		return nil, err
+	pngImages, error := pageProcessor.ProcessPagesFromBytes(parentContext, pdfData, pageCount)
+	if error != nil {
+		return nil, error
 	}
 
 	return pngImages, nil
 }
 
 // getPDFPageCount executes the `pdfinfo` command to determine the number of pages.
-func (processor *Processor) getPDFPageCount(ctx context.Context, pdfData []byte) (int, error) {
-	pdfInfoCommand := exec.CommandContext(ctx, CommandPDFInfo, "-")
+func (processor *Processor) getPDFPageCount(parentContext context.Context, pdfData []byte) (int, error) {
+	pdfInfoCommand := exec.CommandContext(parentContext, CommandPDFInfo, "-")
 	pdfInfoCommand.Stdin = bytes.NewReader(pdfData)
 
-	commandOutput, err := pdfInfoCommand.CombinedOutput()
-	if err != nil {
+	commandOutput, error := pdfInfoCommand.CombinedOutput()
+	if error != nil {
 		return 0, fmt.Errorf(
 			"pdfinfo execution failed: %w. Output: %s",
-			err,
+			error,
 			string(commandOutput),
 		)
 	}
@@ -160,8 +160,8 @@ func parsePdfInfoOutput(output string) (int, error) {
 				return 0, ErrCouldNotParsePagesLine
 			}
 
-			pageCount, err := strconv.Atoi(lineParts[1])
-			if err != nil {
+			pageCount, error := strconv.Atoi(lineParts[1])
+			if error != nil {
 				return 0, ErrCouldNotParsePagesLine
 			}
 			return pageCount, nil
@@ -174,7 +174,7 @@ func parsePdfInfoOutput(output string) (int, error) {
 // renderPageFromBytes executes the Ghostscript command to convert a single PDF page.
 //
 // Why: Ghostscript provides the most reliable headless rendering for PDFs.
-func (processor *Processor) renderPageFromBytes(ctx context.Context, pdfData []byte, pageNumber int) ([]byte, error) {
+func (processor *Processor) renderPageFromBytes(parentContext context.Context, pdfData []byte, pageNumber int) ([]byte, error) {
 	if pageNumber <= 0 {
 		return nil, ErrPageNumberMustBePositive
 	}
@@ -195,20 +195,20 @@ func (processor *Processor) renderPageFromBytes(ctx context.Context, pdfData []b
 		"-", // Read from stdin
 	}
 
-	ghostScriptCommand := exec.CommandContext(ctx, CommandGhostScript, commandArguments...)
+	ghostScriptCommand := exec.CommandContext(parentContext, CommandGhostScript, commandArguments...)
 	ghostScriptCommand.Stdin = bytes.NewReader(pdfData)
 
-	outputData, err := ghostScriptCommand.Output()
-	if err != nil {
-		var exitErr *exec.ExitError
-		if errors.As(err, &exitErr) {
+	outputData, error := ghostScriptCommand.Output()
+	if error != nil {
+		var exitError *exec.ExitError
+		if errors.As(error, &exitError) {
 			return nil, fmt.Errorf(
 				"ghostscript execution failed: %w. Stderr: %s",
-				err,
-				string(exitErr.Stderr),
+				error,
+				string(exitError.Stderr),
 			)
 		}
-		return nil, fmt.Errorf("ghostscript execution failed: %w", err)
+		return nil, fmt.Errorf("ghostscript execution failed: %w", error)
 	}
 
 	return outputData, nil

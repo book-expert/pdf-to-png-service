@@ -40,7 +40,7 @@ func NewPageProcessor(parent *Processor, outputDir string) *PageProcessor {
 //
 // Graph: Fan-Out (Jobs) -> Workers -> Fan-In (Results) -> Sort -> Filter
 func (processor *PageProcessor) ProcessPagesFromBytes(
-	ctx context.Context,
+	parentContext context.Context,
 	pdfData []byte,
 	pageCount int,
 ) ([][]byte, error) {
@@ -54,16 +54,16 @@ func (processor *PageProcessor) ProcessPagesFromBytes(
 	//
 
 	// 1. Fan-Out: Start worker pool
-	for i := 0; i < workerCount; i++ {
+	for index := 0; index < workerCount; index++ {
 		waitGroup.Add(1)
-		go processor.pageWorker(ctx, &waitGroup, jobs, results)
+		go processor.pageWorker(parentContext, &waitGroup, jobs, results)
 	}
 
 	// 2. Queue Jobs: Send work to workers
-	for i := 1; i <= pageCount; i++ {
+	for index := 1; index <= pageCount; index++ {
 		jobs <- RenderJob{
 			PDFData:   pdfData,
-			PageIndex: i,
+			PageIndex: index,
 		}
 	}
 	close(jobs) // Signal workers that no more jobs are coming
@@ -75,21 +75,21 @@ func (processor *PageProcessor) ProcessPagesFromBytes(
 	// 4. Fan-In: Collect results
 	// Why: We must collect all concurrent results before we can order them.
 	collectedPages := make([]RenderResult, 0, pageCount)
-	for res := range results {
-		collectedPages = append(collectedPages, res)
+	for result := range results {
+		collectedPages = append(collectedPages, result)
 	}
 
 	// 5. Sort: Restore page order
 	// Why: Concurrency disrupts order; we must restore it based on PageIndex.
 	// O(n log n) is significantly faster than Bubble Sort for large docs.
-	sort.Slice(collectedPages, func(i, j int) bool {
-		return collectedPages[i].PageIndex < collectedPages[j].PageIndex
+	sort.Slice(collectedPages, func(indexI, indexJ int) bool {
+		return collectedPages[indexI].PageIndex < collectedPages[indexJ].PageIndex
 	})
 
 	// 6. Extract: Create final slice
 	finalPNGs := make([][]byte, 0, len(collectedPages))
-	for _, p := range collectedPages {
-		finalPNGs = append(finalPNGs, p.ImageData)
+	for _, page := range collectedPages {
+		finalPNGs = append(finalPNGs, page.ImageData)
 	}
 
 	return finalPNGs, nil
@@ -97,7 +97,7 @@ func (processor *PageProcessor) ProcessPagesFromBytes(
 
 // pageWorker processes jobs from the channel until closed or context cancelled.
 func (processor *PageProcessor) pageWorker(
-	ctx context.Context,
+	parentContext context.Context,
 	waitGroup *sync.WaitGroup,
 	jobs <-chan RenderJob,
 	results chan<- RenderResult,
@@ -106,14 +106,14 @@ func (processor *PageProcessor) pageWorker(
 
 	for job := range jobs {
 		// Fail fast if context is cancelled
-		if ctx.Err() != nil {
+		if parentContext.Err() != nil {
 			return
 		}
 
-		pngData, err := processor.processSinglePage(ctx, job)
+		pngData, renderError := processor.processSinglePage(parentContext, job)
 		// Log errors but do not crash the batch; individual page failures are tolerable.
-		if err != nil {
-			processor.parent.log.Warnf("Failed to process page %d: %v", job.PageIndex, err)
+		if renderError != nil {
+			processor.parent.log.Warnf("Failed to process page %d: %v", job.PageIndex, renderError)
 			continue
 		}
 
@@ -128,17 +128,17 @@ func (processor *PageProcessor) pageWorker(
 }
 
 // processSinglePage renders a specific page and checks for blankness.
-func (processor *PageProcessor) processSinglePage(ctx context.Context, job RenderJob) ([]byte, error) {
+func (processor *PageProcessor) processSinglePage(parentContext context.Context, job RenderJob) ([]byte, error) {
 	// Step 1: Render PDF -> PNG
-	pngData, err := processor.parent.renderPageFromBytes(ctx, job.PDFData, job.PageIndex)
-	if err != nil {
-		return nil, fmt.Errorf("render error: %w", err)
+	pngData, renderError := processor.parent.renderPageFromBytes(parentContext, job.PDFData, job.PageIndex)
+	if renderError != nil {
+		return nil, fmt.Errorf("render error: %w", renderError)
 	}
 
 	// Step 2: Blank Detection
-	isBlank, err := processor.parent.IsImageBlank(pngData)
-	if err != nil {
-		processor.parent.log.Warnf("Blank detection failed for page %d: %v", job.PageIndex, err)
+	isBlank, detectionError := processor.parent.IsImageBlank(pngData)
+	if detectionError != nil {
+		processor.parent.log.Warnf("Blank detection failed for page %d: %v", job.PageIndex, detectionError)
 		// Fallback: Return image if detection fails to avoid data loss
 		return pngData, nil
 	}

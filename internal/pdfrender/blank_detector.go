@@ -27,9 +27,9 @@ var ErrImageZeroPixels = errors.New("image has zero pixels")
 // Why: Detecting blank pages allows us to filter them out of the final output, saving storage
 // and clean up the resulting document set.
 func (processor *Processor) IsImageBlank(imageData []byte) (bool, error) {
-	decodedImage, _, err := image.Decode(bytes.NewReader(imageData))
-	if err != nil {
-		return false, fmt.Errorf("could not decode image data: %w", err)
+	decodedImage, _, decodeError := image.Decode(bytes.NewReader(imageData))
+	if decodeError != nil {
+		return false, fmt.Errorf("could not decode image data: %w", decodeError)
 	}
 
 	bounds := decodedImage.Bounds()

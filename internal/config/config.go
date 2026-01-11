@@ -47,17 +47,17 @@ type Config struct {
 
 // Load reads and parses the project.toml file.
 func Load(path string) (*Config, error) {
-	file, err := os.Open(path)
-	if err != nil {
-		return nil, err
+	file, openError := os.Open(path)
+	if openError != nil {
+		return nil, openError
 	}
 	defer func() { _ = file.Close() }()
 
-	var cfg Config
+	var configuration Config
 	decoder := toml.NewDecoder(file)
-	if err := decoder.Decode(&cfg); err != nil {
-		return nil, err
+	if decodeError := decoder.Decode(&configuration); decodeError != nil {
+		return nil, decodeError
 	}
 
-	return &cfg, nil
+	return &configuration, nil
 }
