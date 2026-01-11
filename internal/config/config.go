@@ -34,8 +34,9 @@ type Config struct {
 			Durable string `toml:"durable"`
 		} `toml:"consumer"`
 		Producer struct {
-			Stream  string `toml:"stream"`
-			Subject string `toml:"subject"`
+			Stream                      string `toml:"stream"`
+			Subject                     string `toml:"subject"`
+			PDFProcessingStartedSubject string `toml:"pdf_processing_started_subject"`
 		} `toml:"producer"`
 		ObjectStore struct {
 			PDFBucket string `toml:"pdf_bucket"`

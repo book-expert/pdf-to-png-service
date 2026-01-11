@@ -127,6 +127,7 @@ durable = "pdf-to-png-durable"
 [nats.producer]
 stream = "PNGS"
 subject = "pngs.created"
+pdf_processing_started_subject = "pdfs.processing.started"
 
 [nats.object_store]
 pdf_bucket = "PDF_FILES"

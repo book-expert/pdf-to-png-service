@@ -261,6 +261,17 @@ func (job *job) run(ctx context.Context) {
 		job.appLogger.Warnf("Failed to send InProgress: %v", err)
 	}
 
+	// Publish PDFProcessingStartedEvent for Bridge Service
+	if job.cfg.NATS.Producer.PDFProcessingStartedSubject != "" {
+		startedEvent := events.PDFProcessingStartedEvent{
+			Header: *job.header,
+		}
+		data, _ := json.Marshal(startedEvent)
+		if _, err := job.jetStream.Publish(ctx, job.cfg.NATS.Producer.PDFProcessingStartedSubject, data); err != nil {
+			job.appLogger.Warnf("Failed to publish processing started event: %v", err)
+		}
+	}
+
 	if err := job.downloadPDF(ctx); err != nil {
 		job.appLogger.Errorf("Download failed: %v", err)
 		if nakErr := job.msg.Nak(); nakErr != nil {

@@ -2,13 +2,16 @@
 package events
 
 import (
-	common "github.com/niko/common-events"
+	common "github.com/book-expert/common-events"
 )
 
 // EventHeader is an alias to the canonical definition in common-events.
 // This makes the common type available to other packages in this service
 // that import this local 'events' package.
 type EventHeader = common.EventHeader
+
+// PDFProcessingStartedEvent is an alias to the canonical definition in common-events.
+type PDFProcessingStartedEvent = common.PDFProcessingStartedEvent
 
 const NoSoundscapeDirective = "[DO NOT GENERATE SOUNDSCAPE]"
 
