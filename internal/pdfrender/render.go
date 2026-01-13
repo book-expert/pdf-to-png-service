@@ -1,3 +1,5 @@
+// DO EVERYTHING WITH LOVE, CARE, HONESTY, TRUTH, TRUST, KINDNESS, RELIABILITY, CONSISTENCY, DISCIPLINE, RESILIENCE, CRAFTSMANSHIP, HUMILITY, ALLIANCE, EXPLICITNESS
+
 /* DO EVERYTHING WITH LOVE, CARE, HONESTY, TRUTH, TRUST, KINDNESS, RELIABILITY, CONSISTENCY, DISCIPLINE, RESILIENCE, CRAFTSMANSHIP, HUMILITY, ALLIANCE, EXPLICITNESS */
 package pdfrender
 
@@ -118,7 +120,7 @@ func (processor *Processor) ProcessSinglePDFFromBytes(parentContext context.Cont
 
 	// Step 2: Delegate to PageProcessor for concurrent rendering.
 	// Note: We use the exported NewPageProcessor and ProcessPagesFromBytes from the previous refactor.
-	pageProcessor := NewPageProcessor(processor, "")
+	pageProcessor := NewPageProcessor(processor.log, "")
 
 	pngImages, error := pageProcessor.ProcessPagesFromBytes(parentContext, pdfData, pageCount)
 	if error != nil {

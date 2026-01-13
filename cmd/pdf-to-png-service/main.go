@@ -1,3 +1,5 @@
+// DO EVERYTHING WITH LOVE, CARE, HONESTY, TRUTH, TRUST, KINDNESS, RELIABILITY, CONSISTENCY, DISCIPLINE, RESILIENCE, CRAFTSMANSHIP, HUMILITY, ALLIANCE, EXPLICITNESS
+
 /* DO EVERYTHING WITH LOVE, CARE, HONESTY, TRUTH, TRUST, KINDNESS, RELIABILITY, CONSISTENCY, DISCIPLINE, RESILIENCE, CRAFTSMANSHIP, HUMILITY, ALLIANCE, EXPLICITNESS */
 
 // This file orchestrates the pdf-to-png service, initializing and running the NATS
@@ -10,11 +12,10 @@ import (
 	"os"
 	"os/signal"
 	"syscall"
-	"time"
 
 	"github.com/book-expert/logger"
-	"github.com/book-expert/pdf-to-png-service/internal/analyzer"
 	"github.com/book-expert/pdf-to-png-service/internal/config"
+	"github.com/book-expert/pdf-to-png-service/internal/pdfrender"
 	pdfworker "github.com/book-expert/pdf-to-png-service/internal/worker"
 	"github.com/nats-io/nats.go"
 	"github.com/nats-io/nats.go/jetstream"
@@ -65,22 +66,6 @@ func main() {
 func run(parentContext context.Context, configuration *config.Config, appLogger *logger.Logger) error {
 	appLogger.Infof("Configuration loaded. Workers: %d, DPI: %d", configuration.Service.Workers, configuration.Service.DPI)
 
-	// 1. Setup Analyzer
-	apiKey := os.Getenv(configuration.LLM.APIKeyVariable)
-	if apiKey == "" {
-		appLogger.Warnf("LLM API Key variable '%s' is not set. Analyzer will fail if called.", configuration.LLM.APIKeyVariable)
-	}
-
-	analyzerInstance, analyzerError := analyzer.New(parentContext, analyzer.Config{
-		APIKey:                        apiKey,
-		Model:                         configuration.LLM.Model,
-		TextDirectiveGenerationPrompt: configuration.LLM.TextDirectiveGenerationPrompt,
-		MusicConfigGenerationPrompt:   configuration.LLM.MusicConfigGenerationPrompt,
-		Timeout:                       time.Duration(configuration.LLM.TimeoutSeconds) * time.Second,
-	}, appLogger)
-	if analyzerError != nil {
-		return analyzerError
-	}
 
 	// 2. Setup NATS Connection
 	natsConnection, jetStreamContext, natsSetupError := setupNATS(configuration)
@@ -100,22 +85,31 @@ func run(parentContext context.Context, configuration *config.Config, appLogger 
 		return storeError
 	}
 
-	// 4. Initialize and Start Worker
-	workerInstance := pdfworker.New(
-		natsConnection,
-		jetStreamContext,
-		pdfStore,
-		pngStore,
-		analyzerInstance,
-		configuration,
+	// 4. Initialize Renderer
+	renderer := pdfrender.NewProcessor(&pdfrender.Options{},
 		appLogger,
-		configuration.NATS.Producer.Subject,
-		configuration.NATS.Producer.PDFProcessingStartedSubject,
-		configuration.NATS.DLQSubject,
-		configuration.Service.Workers,
 	)
 
-	return workerInstance.Start(parentContext)
+	// 5. Initialize and Start Worker
+	workerInstance, workerError := pdfworker.New(
+		natsConnection,
+		jetStreamContext,
+		jetStreamContext, // JetStream as publisher
+		configuration.NATS.Consumer.Stream,
+		configuration.NATS.Consumer.Subject,
+		configuration.NATS.Consumer.Durable,
+		configuration.NATS.Producer.Subject,
+		pdfStore,
+		pngStore,
+		renderer,
+		appLogger,
+		configuration,
+	)
+	if workerError != nil {
+		return workerError
+	}
+
+	return workerInstance.Run(parentContext)
 }
 
 // setupNATS initializes NATS connection and JetStream context.
