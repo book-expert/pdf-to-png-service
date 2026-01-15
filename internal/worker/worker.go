@@ -29,20 +29,20 @@ type JetStreamPublisher interface {
 	Publish(requestContext context.Context, subject string, data []byte, options ...jetstream.PublishOpt) (*jetstream.PubAck, error)
 }
 
-// Worker manages the lifecycle of processing PDF-to-PNG conversion requests from NATS.
-type Worker struct {
-	baseWorker         *worker.Worker[*events.PdfCreatedEvent]
+// Processor coordinates the conversion of PDF documents into PNG image sequences.
+type Processor struct {
+	engine             *worker.Worker[*events.PdfCreatedEvent]
 	jetStreamPublisher JetStreamPublisher
 	producerSubject    string
-	pdfStore           jetstream.ObjectStore
-	pngStore           jetstream.ObjectStore
-	renderer           *pdfrender.Processor
-	logger             *logger.Logger
+	pdfObjectStore     jetstream.ObjectStore
+	pngObjectStore     jetstream.ObjectStore
+	pdfRenderer        *pdfrender.Processor
+	serviceLogger      *logger.Logger
 	configuration      *config.Config
 }
 
-// New initializes a new Worker with all necessary dependencies.
-func New(
+// NewProcessor initializes a new Processor with all necessary dependencies.
+func NewProcessor(
 	natsConnection *nats.Conn,
 	jetStreamContext jetstream.JetStream,
 	jetStreamPublisher JetStreamPublisher,
@@ -50,19 +50,19 @@ func New(
 	subscriptionSubject string,
 	consumerDurableName string,
 	producerSubject string,
-	pdfStore jetstream.ObjectStore,
-	pngStore jetstream.ObjectStore,
-	renderer *pdfrender.Processor,
+	pdfObjectStore jetstream.ObjectStore,
+	pngObjectStore jetstream.ObjectStore,
+	pdfRenderer *pdfrender.Processor,
 	serviceLogger *logger.Logger,
 	configuration *config.Config,
-) (*Worker, error) {
-	pdfWorker := &Worker{
+) (*Processor, error) {
+	pdfProcessor := &Processor{
 		jetStreamPublisher: jetStreamPublisher,
 		producerSubject:    producerSubject,
-		pdfStore:           pdfStore,
-		pngStore:           pngStore,
-		renderer:           renderer,
-		logger:             serviceLogger,
+		pdfObjectStore:     pdfObjectStore,
+		pngObjectStore:     pngObjectStore,
+		pdfRenderer:        pdfRenderer,
+		serviceLogger:      serviceLogger,
 		configuration:      configuration,
 	}
 
@@ -74,49 +74,48 @@ func New(
 		MaxDeliver:    5,
 	}
 
-	pdfWorker.baseWorker = worker.New(natsConnection, jetStreamContext, serviceLogger, workerConfiguration, pdfWorker.handleMessage)
-	return pdfWorker, nil
+	pdfProcessor.engine = worker.New(natsConnection, jetStreamContext, serviceLogger, workerConfiguration, pdfProcessor.handleMessage)
+	return pdfProcessor, nil
 }
 
-// Run executes the main worker loop.
-func (pdfWorker *Worker) Run(systemContext context.Context) error {
-	return pdfWorker.baseWorker.Start(systemContext)
+// Start executes the underlying worker engine.
+func (processor *Processor) Start(systemContext context.Context) error {
+	return processor.engine.Start(systemContext)
 }
 
-func (pdfWorker *Worker) handleMessage(requestContext context.Context, event *events.PdfCreatedEvent, message jetstream.Msg) error {
+func (processor *Processor) handleMessage(requestContext context.Context, event *events.PdfCreatedEvent, message jetstream.Msg) error {
 	parentContext, cancelProcessing := context.WithTimeout(requestContext, MessageProcessingTimeout)
 	defer cancelProcessing()
 
-	pdfWorker.logger.Infof("Processing PDF: %s", event.PdfKey)
+	processor.serviceLogger.Infof("Processing PDF: %s", event.PdfKey)
 
-	if workflowError := pdfWorker.executeWorkflow(parentContext, event); workflowError != nil {
-		pdfWorker.logger.Errorf("Workflow failed for %s: %v", event.PdfKey, workflowError)
+	if workflowExecutionError := processor.executeWorkflow(parentContext, event); workflowExecutionError != nil {
+		processor.serviceLogger.Errorf("Workflow failed for %s: %v", event.PdfKey, workflowExecutionError)
 		// Nak with delay to allow retry
 		_ = message.NakWithDelay(10 * time.Second)
-		return workflowError
+		return workflowExecutionError
 	}
 
-	pdfWorker.logger.Successf("Completed: %s", event.PdfKey)
+	processor.serviceLogger.Successf("Completed: %s", event.PdfKey)
 	return nil
 }
 
-func (pdfWorker *Worker) executeWorkflow(parentContext context.Context, event *events.PdfCreatedEvent) error {
+func (processor *Processor) executeWorkflow(parentContext context.Context, event *events.PdfCreatedEvent) error {
 	// 1. Download PDF
-	pdfData, downloadError := pdfWorker.downloadPDF(parentContext, event.PdfKey)
+	pdfData, downloadError := processor.downloadPDF(parentContext, event.PdfKey)
 	if downloadError != nil {
 		return fmt.Errorf("download failed: %w", downloadError)
 	}
 
 	// 2. Render PNGs
-	pages, renderError := pdfWorker.renderer.ProcessSinglePDFFromBytes(parentContext, pdfData)
-	if renderError != nil {
-		return fmt.Errorf("render failed: %w", renderError)
+	pages, renderingError := processor.pdfRenderer.ProcessSinglePDFFromBytes(parentContext, pdfData)
+	if renderingError != nil {
+		return fmt.Errorf("render failed: %w", renderingError)
 	}
 
 	// 3. Process Job Settings (Extract Audio Session Config if not present)
-	// If settings are present, we propagate them.
 	if event.Settings != nil && event.Settings.Voice != "" && (event.Settings.AudioSessionConfig == nil || event.Settings.AudioSessionConfig.VoiceIdentifier == "") {
-		voiceIdentifier, voiceStyle := pdfWorker.parseVoice(event.Settings.Voice)
+		voiceIdentifier, voiceStyle := processor.parseVoice(event.Settings.Voice)
 
 		if event.Settings.AudioSessionConfig == nil {
 			event.Settings.AudioSessionConfig = &events.AudioSessionConfig{}
@@ -131,7 +130,7 @@ func (pdfWorker *Worker) executeWorkflow(parentContext context.Context, event *e
 	// 4. Upload each page and publish event
 	for index, pngContent := range pages {
 		pngKey := fmt.Sprintf("%s-%d.png", event.PdfKey, index+1)
-		if _, uploadError := pdfWorker.pngStore.PutBytes(parentContext, pngKey, pngContent); uploadError != nil {
+		if _, uploadError := processor.pngObjectStore.PutBytes(parentContext, pngKey, pngContent); uploadError != nil {
 			return fmt.Errorf("upload page %d failed: %w", index+1, uploadError)
 		}
 
@@ -150,7 +149,7 @@ func (pdfWorker *Worker) executeWorkflow(parentContext context.Context, event *e
 		}
 
 		data, _ := json.Marshal(completionEvent)
-		if _, publishError := pdfWorker.jetStreamPublisher.Publish(parentContext, pdfWorker.producerSubject, data); publishError != nil {
+		if _, publishError := processor.jetStreamPublisher.Publish(parentContext, processor.producerSubject, data); publishError != nil {
 			return fmt.Errorf("publish page %d failed: %w", index+1, publishError)
 		}
 	}
@@ -158,8 +157,8 @@ func (pdfWorker *Worker) executeWorkflow(parentContext context.Context, event *e
 	return nil
 }
 
-func (pdfWorker *Worker) downloadPDF(parentContext context.Context, pdfKey string) ([]byte, error) {
-	object, getError := pdfWorker.pdfStore.Get(parentContext, pdfKey)
+func (processor *Processor) downloadPDF(parentContext context.Context, pdfKey string) ([]byte, error) {
+	object, getError := processor.pdfObjectStore.Get(parentContext, pdfKey)
 	if getError != nil {
 		return nil, getError
 	}
@@ -167,20 +166,17 @@ func (pdfWorker *Worker) downloadPDF(parentContext context.Context, pdfKey strin
 		_ = object.Close()
 	}()
 
-	info, _ := object.Info()
-	data := make([]byte, info.Size)
+	information, _ := object.Info()
+	data := make([]byte, information.Size)
 	_, readError := object.Read(data)
 	return data, readError
 }
 
-func (pdfWorker *Worker) parseVoice(voice string) (voiceIdentifier, voiceStyle string) {
-	// Simple parser: "Voice Name (Style Description)"
-	// Example: "Niko (Calm, mature)" -> voiceIdentifier="Niko", voiceStyle="Calm, mature"
+func (processor *Processor) parseVoice(voice string) (voiceIdentifier, voiceStyle string) {
 	if voice == "" {
 		return "", ""
 	}
 
-	// Find the style part in parentheses
 	start := -1
 	end := -1
 	for index, character := range voice {
@@ -198,6 +194,5 @@ func (pdfWorker *Worker) parseVoice(voice string) (voiceIdentifier, voiceStyle s
 		return voiceIdentifier, voiceStyle
 	}
 
-	// No style found
 	return strings.TrimSpace(voice), ""
 }

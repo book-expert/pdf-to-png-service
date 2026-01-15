@@ -1,7 +1,5 @@
 /* DO EVERYTHING WITH LOVE, CARE, HONESTY, TRUTH, TRUST, KINDNESS, RELIABILITY, CONSISTENCY, DISCIPLINE, RESILIENCE, CRAFTSMANSHIP, HUMILITY, ALLIANCE, EXPLICITNESS */
 
-// This file orchestrates the pdf-to-png service, initializing and running the NATS
-// worker.
 package main
 
 import (
@@ -24,7 +22,6 @@ const (
 	logFileName = "pdf-to-png-service.log"
 )
 
-// main is the entry point of the application.
 func main() {
 	rootContext, stopSignal := signal.NotifyContext(
 		context.Background(),
@@ -33,22 +30,20 @@ func main() {
 	)
 	defer stopSignal()
 
-	// 1. Initial configuration load for logging
-	configuration, configurationError := config.Load("")
-	if configurationError != nil {
-		fmt.Fprintf(os.Stderr, "Failed to load configuration: %v\n", configurationError)
+	configuration, configurationLoadError := config.Load("")
+	if configurationLoadError != nil {
+		fmt.Fprintf(os.Stderr, "Failed to load configuration: %v\n", configurationLoadError)
 		os.Exit(1)
 	}
 
-	// 2. Setup Bootstrap Logger
 	logDirectory := os.Getenv("LOG_DIR")
 	if logDirectory == "" {
-		logDirectory = configuration.Service.LogDir
+		logDirectory = configuration.Service.LogDirectory
 	}
 
-	appLogger, loggerError := logger.New(logDirectory, logFileName)
-	if loggerError != nil {
-		fmt.Fprintf(os.Stderr, "Failed to initialize logger: %v\n", loggerError)
+	appLogger, loggerInitializationError := logger.New(logDirectory, logFileName)
+	if loggerInitializationError != nil {
+		fmt.Fprintf(os.Stderr, "Failed to initialize logger: %v\n", loggerInitializationError)
 		os.Exit(1)
 	}
 	defer func() {
@@ -61,19 +56,16 @@ func main() {
 	}
 }
 
-// run initializes all components and starts the worker.
 func run(parentContext context.Context, configuration *config.Config, appLogger *logger.Logger) error {
-	appLogger.Infof("Configuration loaded. Workers: %d, DPI: %d", configuration.Service.Workers, configuration.Service.DPI)
+	appLogger.Infof("Configuration loaded. Workers: %d, DotsPerInch: %d", configuration.Service.Workers, configuration.Service.DotsPerInch)
 
-	// 2. Setup NATS Connection
 	natsConnection, jetStreamContext, natsSetupError := setupNATS(configuration)
 	if natsSetupError != nil {
 		return natsSetupError
 	}
 	defer natsConnection.Close()
 
-	// 3. Setup Object Stores using Canonical Registry
-	pdfStore, pngStore, storeError := getObjectStores(
+	pdfObjectStore, pngObjectStore, storeError := getObjectStores(
 		parentContext,
 		jetStreamContext,
 		events.BucketPdfFiles,
@@ -83,34 +75,34 @@ func run(parentContext context.Context, configuration *config.Config, appLogger 
 		return storeError
 	}
 
-	// 4. Initialize Renderer
-	renderer := pdfrender.NewProcessor(&pdfrender.Options{},
+	pdfRenderer := pdfrender.NewProcessor(&pdfrender.Options{
+		DotsPerInch: configuration.Service.DotsPerInch,
+		Workers:     configuration.Service.Workers,
+	},
 		appLogger,
 	)
 
-	// 5. Initialize and Start Worker
-	workerInstance, workerError := pdfworker.New(
+	processorInstance, processorError := pdfworker.NewProcessor(
 		natsConnection,
 		jetStreamContext,
-		jetStreamContext, // JetStream as publisher
+		jetStreamContext,
 		events.StreamPdfFiles,
 		events.SubjectPdfCreated,
 		"pdf-to-png-consumer",
 		events.SubjectPngCreated,
-		pdfStore,
-		pngStore,
-		renderer,
+		pdfObjectStore,
+		pngObjectStore,
+		pdfRenderer,
 		appLogger,
 		configuration,
 	)
-	if workerError != nil {
-		return workerError
+	if processorError != nil {
+		return processorError
 	}
 
-	return workerInstance.Run(parentContext)
+	return processorInstance.Start(parentContext)
 }
 
-// setupNATS initializes NATS connection and JetStream context.
 func setupNATS(configuration *config.Config) (*nats.Conn, jetstream.JetStream, error) {
 	natsConnection, connectionError := nats.Connect(configuration.NATS.Address)
 	if connectionError != nil {
@@ -119,13 +111,13 @@ func setupNATS(configuration *config.Config) (*nats.Conn, jetstream.JetStream, e
 
 	jetStreamContext, jetStreamError := jetstream.New(natsConnection)
 	if jetStreamError != nil {
+		natsConnection.Close()
 		return nil, nil, jetStreamError
 	}
 
 	return natsConnection, jetStreamContext, nil
 }
 
-// getObjectStores binds to the object stores for PDFs and PNGs.
 func getObjectStores(
 	parentContext context.Context,
 	jetStreamContext jetstream.JetStream,

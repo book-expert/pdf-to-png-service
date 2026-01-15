@@ -24,7 +24,7 @@ const (
 	CommandGhostScript = "ghostscript"
 
 	// Default configuration values.
-	DefaultDPI                    = 200
+	DefaultDotsPerInch            = 200
 	DefaultBlankFuzzPercent       = 5
 	DefaultBlankNonWhiteThreshold = 0.005
 )
@@ -41,7 +41,7 @@ var (
 // Options holds all configurable parameters for a Processor.
 type Options struct {
 	ProgressBarOutput      io.Writer
-	DPI                    int
+	DotsPerInch            int
 	Workers                int
 	BlankFuzzPercent       int
 	BlankNonWhiteThreshold float64
@@ -49,25 +49,23 @@ type Options struct {
 
 // Processor encapsulates the logic for processing a batch of PDF files.
 type Processor struct {
-	log    *logger.Logger
-	config Options
+	serviceLogger *logger.Logger
+	configuration Options
 }
 
 // NewProcessor creates and initializes a new Processor with validated options.
-func NewProcessor(options *Options, log *logger.Logger) *Processor {
+func NewProcessor(options *Options, serviceLogger *logger.Logger) *Processor {
 	applyDefaultConfiguration(options)
 
 	return &Processor{
-		config: *options,
-		log:    log,
+		configuration: *options,
+		serviceLogger: serviceLogger,
 	}
 }
 
 // applyDefaultConfiguration fills zero-value fields in Options with sensible defaults.
-//
-// Why: Ensures the processor always runs with valid parameters without forcing the caller to set everything.
 func applyDefaultConfiguration(options *Options) {
-	options.DPI = resolvePositiveInteger(options.DPI, DefaultDPI)
+	options.DotsPerInch = resolvePositiveInteger(options.DotsPerInch, DefaultDotsPerInch)
 	options.Workers = resolvePositiveInteger(options.Workers, runtime.NumCPU())
 
 	options.BlankFuzzPercent = resolvePositiveInteger(
@@ -102,28 +100,23 @@ func resolvePositiveFloat(value, defaultValue float64) float64 {
 }
 
 // ProcessSinglePDFFromBytes converts a single PDF file from a byte slice to PNGs.
-//
-// Flow: Get Page Count -> Initialize PageProcessor -> Execute Batch -> Return Images
 func (processor *Processor) ProcessSinglePDFFromBytes(parentContext context.Context, pdfData []byte) ([][]byte, error) {
-	// Step 1: Determine the total number of pages in the PDF.
-	pageCount, error := processor.getPDFPageCount(parentContext, pdfData)
-	if error != nil {
-		return nil, fmt.Errorf("could not get page count: %w", error)
+	pageCount, lookupError := processor.getPDFPageCount(parentContext, pdfData)
+	if lookupError != nil {
+		return nil, fmt.Errorf("could not get page count: %w", lookupError)
 	}
 
 	if pageCount <= 0 {
 		return nil, ErrPDFZeroOrNegativePages
 	}
 
-	processor.log.Infof(fmt.Sprintf("Rendering %d pages", pageCount))
+	processor.serviceLogger.Infof("Rendering %d pages", pageCount)
 
-	// Step 2: Delegate to PageProcessor for concurrent rendering.
-	// Note: We use the exported NewPageProcessor and ProcessPagesFromBytes from the previous refactor.
-	pageProcessor := NewPageProcessor(processor.log, "")
+	pageProcessor := NewPageProcessor(processor.serviceLogger, "")
 
-	pngImages, error := pageProcessor.ProcessPagesFromBytes(parentContext, pdfData, pageCount)
-	if error != nil {
-		return nil, error
+	pngImages, processingError := pageProcessor.ProcessPagesFromBytes(parentContext, pdfData, pageCount)
+	if processingError != nil {
+		return nil, processingError
 	}
 
 	return pngImages, nil
@@ -134,11 +127,11 @@ func (processor *Processor) getPDFPageCount(parentContext context.Context, pdfDa
 	pdfInfoCommand := exec.CommandContext(parentContext, CommandPDFInfo, "-")
 	pdfInfoCommand.Stdin = bytes.NewReader(pdfData)
 
-	commandOutput, error := pdfInfoCommand.CombinedOutput()
-	if error != nil {
+	commandOutput, executionError := pdfInfoCommand.CombinedOutput()
+	if executionError != nil {
 		return 0, fmt.Errorf(
 			"pdfinfo execution failed: %w. Output: %s",
-			error,
+			executionError,
 			string(commandOutput),
 		)
 	}
@@ -147,8 +140,6 @@ func (processor *Processor) getPDFPageCount(parentContext context.Context, pdfDa
 }
 
 // parsePdfInfoOutput scans the text output from the `pdfinfo` command.
-//
-// Why: `pdfinfo` format is line-based. Scanning line-by-line is more robust than regex.
 func parsePdfInfoOutput(output string) (int, error) {
 	outputScanner := bufio.NewScanner(strings.NewReader(output))
 
@@ -161,8 +152,8 @@ func parsePdfInfoOutput(output string) (int, error) {
 				return 0, ErrCouldNotParsePagesLine
 			}
 
-			pageCount, error := strconv.Atoi(lineParts[1])
-			if error != nil {
+			pageCount, conversionError := strconv.Atoi(lineParts[1])
+			if conversionError != nil {
 				return 0, ErrCouldNotParsePagesLine
 			}
 			return pageCount, nil

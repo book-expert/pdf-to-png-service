@@ -1,5 +1,3 @@
-// DO EVERYTHING WITH LOVE, CARE, HONESTY, TRUTH, TRUST, KINDNESS, RELIABILITY, CONSISTENCY, DISCIPLINE, RESILIENCE, CRAFTSMANSHIP, HUMILITY, ALLIANCE, EXPLICITNESS
-
 /* DO EVERYTHING WITH LOVE, CARE, HONESTY, TRUTH, TRUST, KINDNESS, RELIABILITY, CONSISTENCY, DISCIPLINE, RESILIENCE, CRAFTSMANSHIP, HUMILITY, ALLIANCE, EXPLICITNESS */
 
 package pdfrender
@@ -17,12 +15,12 @@ import (
 )
 
 type PageProcessor struct {
-	logger *logger.Logger
+	serviceLogger *logger.Logger
 }
 
-func NewPageProcessor(loggerInstance *logger.Logger, _ string) *PageProcessor {
+func NewPageProcessor(serviceLogger *logger.Logger, _ string) *PageProcessor {
 	return &PageProcessor{
-		logger: loggerInstance,
+		serviceLogger: serviceLogger,
 	}
 }
 
@@ -51,9 +49,6 @@ func (pageProcessor *PageProcessor) ProcessPagesFromBytes(parentContext context.
 				results <- renderResult{error: parentContext.Err()}
 				return
 			default:
-				// Fitz is NOT thread-safe for the same document object.
-				// We need a lock or to re-open for each page (re-opening is safer but slower).
-				// For this implementation, we re-open.
 				localDocument, fitzError := fitz.NewFromMemory(pdfData)
 				if fitzError != nil {
 					results <- renderResult{error: fitzError}
@@ -61,7 +56,7 @@ func (pageProcessor *PageProcessor) ProcessPagesFromBytes(parentContext context.
 				}
 				defer func() {
 					if closeError := localDocument.Close(); closeError != nil {
-						pageProcessor.logger.Warnf("failed to close local fitz document: %v", closeError)
+						pageProcessor.serviceLogger.Warnf("failed to close local fitz document: %v", closeError)
 					}
 				}()
 
@@ -95,8 +90,7 @@ func (pageProcessor *PageProcessor) ProcessPagesFromBytes(parentContext context.
 		finalPages = append(finalPages, result)
 	}
 
-	// 5. Sort: Restore page order
-	// Why: Concurrency disrupts order; we must restore it based on pageIndex.
+	// Sort: Restore page order
 	sort.Slice(finalPages, func(index, nextIndex int) bool {
 		return finalPages[index].index < finalPages[nextIndex].index
 	})

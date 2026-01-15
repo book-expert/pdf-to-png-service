@@ -13,7 +13,7 @@ import (
 	"text/template"
 	"time"
 
-	events "github.com/book-expert/common-events"
+	"github.com/book-expert/common-events"
 	"github.com/book-expert/logger"
 	"google.golang.org/genai"
 )
@@ -29,21 +29,21 @@ type Config struct {
 type Analyzer struct {
 	client        *genai.Client
 	configuration Config
-	logger        *logger.Logger
+	serviceLogger *logger.Logger
 }
 
-func New(parentContext context.Context, configuration Config, logger *logger.Logger) (*Analyzer, error) {
-	client, error := genai.NewClient(parentContext, &genai.ClientConfig{
+func New(parentContext context.Context, configuration Config, serviceLogger *logger.Logger) (*Analyzer, error) {
+	client, initializationError := genai.NewClient(parentContext, &genai.ClientConfig{
 		APIKey: configuration.APIKey,
 	})
-	if error != nil {
-		return nil, fmt.Errorf("failed to create genai client: %w", error)
+	if initializationError != nil {
+		return nil, fmt.Errorf("failed to create genai client: %w", initializationError)
 	}
 
 	return &Analyzer{
 		client:        client,
 		configuration: configuration,
-		logger:        logger,
+		serviceLogger: serviceLogger,
 	}, nil
 }
 
@@ -68,9 +68,9 @@ func (analyzer *Analyzer) GenerateTextDirective(parentContext context.Context, p
 
 // GenerateMusicConfig analyzes the PDF and returns a structured configuration for Lyria.
 func (analyzer *Analyzer) GenerateMusicConfig(parentContext context.Context, pdfData []byte, input AnalysisInput) (*MusicAnalysisResponse, error) {
-	jsonString, error := analyzer.generateContent(parentContext, pdfData, input, analyzer.configuration.MusicConfigGenerationPrompt, "application/json")
-	if error != nil {
-		return nil, error
+	jsonString, generationError := analyzer.generateContent(parentContext, pdfData, input, analyzer.configuration.MusicConfigGenerationPrompt, "application/json")
+	if generationError != nil {
+		return nil, generationError
 	}
 
 	// Clean markdown block if present (defensive)
@@ -80,7 +80,7 @@ func (analyzer *Analyzer) GenerateMusicConfig(parentContext context.Context, pdf
 
 	var response MusicAnalysisResponse
 	if unmarshalError := json.Unmarshal([]byte(jsonString), &response); unmarshalError != nil {
-		analyzer.logger.Errorf("Failed to parse Music Config JSON: %s", jsonString)
+		analyzer.serviceLogger.Errorf("Failed to parse Music Config JSON: %s", jsonString)
 		return nil, fmt.Errorf("parse json response: %w", unmarshalError)
 	}
 
@@ -96,22 +96,22 @@ func (analyzer *Analyzer) generateContent(
 	responseMIMEType string,
 ) (string, error) {
 	// 1. Write PDF to temp file for upload
-	temporaryFile, error := os.CreateTemp("", "analyze-*.pdf")
-	if error != nil {
-		return "", fmt.Errorf("create temp file: %w", error)
+	temporaryFile, creationError := os.CreateTemp("", "analyze-*.pdf")
+	if creationError != nil {
+		return "", fmt.Errorf("create temp file: %w", creationError)
 	}
 	defer func() {
 		if removalError := os.Remove(temporaryFile.Name()); removalError != nil {
-			analyzer.logger.Warnf("Failed to remove temp file %s: %v", temporaryFile.Name(), removalError)
+			analyzer.serviceLogger.Warnf("Failed to remove temp file %s: %v", temporaryFile.Name(), removalError)
 		}
 	}()
 
-	if _, error := io.Copy(temporaryFile, bytes.NewReader(pdfData)); error != nil {
+	if _, copyError := io.Copy(temporaryFile, bytes.NewReader(pdfData)); copyError != nil {
 		_ = temporaryFile.Close() // Best effort close
-		return "", fmt.Errorf("write pdf data: %w", error)
+		return "", fmt.Errorf("write pdf data: %w", copyError)
 	}
-	if error := temporaryFile.Close(); error != nil {
-		return "", fmt.Errorf("close temp file: %w", error)
+	if closeError := temporaryFile.Close(); closeError != nil {
+		return "", fmt.Errorf("close temp file: %w", closeError)
 	}
 
 	// 2. Upload file to Gemini
@@ -120,37 +120,37 @@ func (analyzer *Analyzer) generateContent(
 		MIMEType:    "application/pdf",
 	}
 	// Re-open file for reading
-	file, error := os.Open(temporaryFile.Name())
-	if error != nil {
-		return "", fmt.Errorf("open temp file: %w", error)
+	file, openError := os.Open(temporaryFile.Name())
+	if openError != nil {
+		return "", fmt.Errorf("open temp file: %w", openError)
 	}
 	defer func() {
 		if closeError := file.Close(); closeError != nil {
-			analyzer.logger.Warnf("Failed to close temp file %s: %v", temporaryFile.Name(), closeError)
+			analyzer.serviceLogger.Warnf("Failed to close temp file %s: %v", temporaryFile.Name(), closeError)
 		}
 	}()
 
-	uploadResult, error := analyzer.client.Files.Upload(parentContext, file, uploadConfig)
-	if error != nil {
-		return "", fmt.Errorf("upload file: %w", error)
+	uploadResult, uploadError := analyzer.client.Files.Upload(parentContext, file, uploadConfig)
+	if uploadError != nil {
+		return "", fmt.Errorf("upload file: %w", uploadError)
 	}
 
 	// Defer deletion of the uploaded file from Gemini to save storage/cleanup
 	defer func() {
 		if _, deletionError := analyzer.client.Files.Delete(parentContext, uploadResult.Name, nil); deletionError != nil {
-			analyzer.logger.Warnf("Failed to delete remote file %s: %v", uploadResult.Name, deletionError)
+			analyzer.serviceLogger.Warnf("Failed to delete remote file %s: %v", uploadResult.Name, deletionError)
 		}
 	}()
 
 	// 3. Prepare Prompt
-	textTemplate, error := template.New("prompt").Parse(promptTemplate)
-	if error != nil {
-		return "", fmt.Errorf("parse prompt template: %w", error)
+	textTemplate, parseError := template.New("prompt").Parse(promptTemplate)
+	if parseError != nil {
+		return "", fmt.Errorf("parse prompt template: %w", parseError)
 	}
 
 	var promptBuffer bytes.Buffer
-	if error := textTemplate.Execute(&promptBuffer, input); error != nil {
-		return "", fmt.Errorf("execute prompt template: %w", error)
+	if executionError := textTemplate.Execute(&promptBuffer, input); executionError != nil {
+		return "", fmt.Errorf("execute prompt template: %w", executionError)
 	}
 
 	// 4. Call Generate Content
@@ -162,7 +162,7 @@ func (analyzer *Analyzer) generateContent(
 		generationConfig.ResponseMIMEType = responseMIMEType
 	}
 
-	response, error := analyzer.client.Models.GenerateContent(
+	response, generationError := analyzer.client.Models.GenerateContent(
 		parentContext,
 		analyzer.configuration.Model,
 		[]*genai.Content{
@@ -182,8 +182,8 @@ func (analyzer *Analyzer) generateContent(
 		},
 		generationConfig,
 	)
-	if error != nil {
-		return "", fmt.Errorf("generate content: %w", error)
+	if generationError != nil {
+		return "", fmt.Errorf("generate content: %w", generationError)
 	}
 
 	if len(response.Candidates) == 0 || len(response.Candidates[0].Content.Parts) == 0 {
@@ -196,7 +196,7 @@ func (analyzer *Analyzer) generateContent(
 		partText += part.Text
 	}
 
-	analyzer.logger.Infof("Raw Gemini Response (%s): %s", responseMIMEType, partText)
+	analyzer.serviceLogger.Infof("Raw Gemini Response (%s): %s", responseMIMEType, partText)
 
 	return partText, nil
 }
