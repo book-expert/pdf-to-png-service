@@ -1,6 +1,5 @@
-// DO EVERYTHING WITH LOVE, CARE, HONESTY, TRUTH, TRUST, KINDNESS, RELIABILITY, CONSISTENCY, DISCIPLINE, RESILIENCE, CRAFTSMANSHIP, HUMILITY, ALLIANCE, EXPLICITNESS
-
 /* DO EVERYTHING WITH LOVE, CARE, HONESTY, TRUTH, TRUST, KINDNESS, RELIABILITY, CONSISTENCY, DISCIPLINE, RESILIENCE, CRAFTSMANSHIP, HUMILITY, ALLIANCE, EXPLICITNESS */
+
 package pdfrender
 
 import (
@@ -171,47 +170,4 @@ func parsePdfInfoOutput(output string) (int, error) {
 	}
 
 	return 0, ErrCouldNotParsePagesLine
-}
-
-// renderPageFromBytes executes the Ghostscript command to convert a single PDF page.
-//
-// Why: Ghostscript provides the most reliable headless rendering for PDFs.
-func (processor *Processor) renderPageFromBytes(parentContext context.Context, pdfData []byte, pageNumber int) ([]byte, error) {
-	if pageNumber <= 0 {
-		return nil, ErrPageNumberMustBePositive
-	}
-
-	//
-	// Arguments are constructed to output a single page to stdout ("-") as a PNG.
-	commandArguments := []string{
-		"-q", "-dNOPAUSE", "-dBATCH",
-		"-sDEVICE=png16m",
-		fmt.Sprintf("-r%d", processor.config.DPI),
-		fmt.Sprintf("-dFirstPage=%d", pageNumber),
-		fmt.Sprintf("-dLastPage=%d", pageNumber),
-		"-o", "-", // Output to stdout
-		"-dTextAlphaBits=4",
-		"-dGraphicsAlphaBits=4",
-		"-dDownScaleFactor=1",
-		"-dPDFFitPage",
-		"-", // Read from stdin
-	}
-
-	ghostScriptCommand := exec.CommandContext(parentContext, CommandGhostScript, commandArguments...)
-	ghostScriptCommand.Stdin = bytes.NewReader(pdfData)
-
-	outputData, error := ghostScriptCommand.Output()
-	if error != nil {
-		var exitError *exec.ExitError
-		if errors.As(error, &exitError) {
-			return nil, fmt.Errorf(
-				"ghostscript execution failed: %w. Stderr: %s",
-				error,
-				string(exitError.Stderr),
-			)
-		}
-		return nil, fmt.Errorf("ghostscript execution failed: %w", error)
-	}
-
-	return outputData, nil
 }

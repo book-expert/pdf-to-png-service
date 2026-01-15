@@ -1,5 +1,3 @@
-// DO EVERYTHING WITH LOVE, CARE, HONESTY, TRUTH, TRUST, KINDNESS, RELIABILITY, CONSISTENCY, DISCIPLINE, RESILIENCE, CRAFTSMANSHIP, HUMILITY, ALLIANCE, EXPLICITNESS
-
 /* DO EVERYTHING WITH LOVE, CARE, HONESTY, TRUTH, TRUST, KINDNESS, RELIABILITY, CONSISTENCY, DISCIPLINE, RESILIENCE, CRAFTSMANSHIP, HUMILITY, ALLIANCE, EXPLICITNESS */
 
 // This file orchestrates the pdf-to-png service, initializing and running the NATS
@@ -13,6 +11,7 @@ import (
 	"os/signal"
 	"syscall"
 
+	"github.com/book-expert/common-events"
 	"github.com/book-expert/logger"
 	"github.com/book-expert/pdf-to-png-service/internal/config"
 	"github.com/book-expert/pdf-to-png-service/internal/pdfrender"
@@ -35,7 +34,7 @@ func main() {
 	defer stopSignal()
 
 	// 1. Initial configuration load for logging
-	configuration, configurationError := config.Load("project.toml")
+	configuration, configurationError := config.Load("")
 	if configurationError != nil {
 		fmt.Fprintf(os.Stderr, "Failed to load configuration: %v\n", configurationError)
 		os.Exit(1)
@@ -66,7 +65,6 @@ func main() {
 func run(parentContext context.Context, configuration *config.Config, appLogger *logger.Logger) error {
 	appLogger.Infof("Configuration loaded. Workers: %d, DPI: %d", configuration.Service.Workers, configuration.Service.DPI)
 
-
 	// 2. Setup NATS Connection
 	natsConnection, jetStreamContext, natsSetupError := setupNATS(configuration)
 	if natsSetupError != nil {
@@ -74,12 +72,12 @@ func run(parentContext context.Context, configuration *config.Config, appLogger 
 	}
 	defer natsConnection.Close()
 
-	// 3. Setup Object Stores
+	// 3. Setup Object Stores using Canonical Registry
 	pdfStore, pngStore, storeError := getObjectStores(
 		parentContext,
 		jetStreamContext,
-		configuration.NATS.ObjectStore.PDFBucket,
-		configuration.NATS.ObjectStore.PNGBucket,
+		events.BucketPdfFiles,
+		events.BucketPngFiles,
 	)
 	if storeError != nil {
 		return storeError
@@ -95,10 +93,10 @@ func run(parentContext context.Context, configuration *config.Config, appLogger 
 		natsConnection,
 		jetStreamContext,
 		jetStreamContext, // JetStream as publisher
-		configuration.NATS.Consumer.Stream,
-		configuration.NATS.Consumer.Subject,
-		configuration.NATS.Consumer.Durable,
-		configuration.NATS.Producer.Subject,
+		events.StreamPdfFiles,
+		events.SubjectPdfCreated,
+		"pdf-to-png-consumer",
+		events.SubjectPngCreated,
 		pdfStore,
 		pngStore,
 		renderer,
@@ -114,7 +112,7 @@ func run(parentContext context.Context, configuration *config.Config, appLogger 
 
 // setupNATS initializes NATS connection and JetStream context.
 func setupNATS(configuration *config.Config) (*nats.Conn, jetstream.JetStream, error) {
-	natsConnection, connectionError := nats.Connect(configuration.NATS.URL)
+	natsConnection, connectionError := nats.Connect(configuration.NATS.Address)
 	if connectionError != nil {
 		return nil, nil, connectionError
 	}

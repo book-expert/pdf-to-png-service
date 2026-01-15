@@ -1,68 +1,91 @@
 /* DO EVERYTHING WITH LOVE, CARE, HONESTY, TRUTH, TRUST, KINDNESS, RELIABILITY, CONSISTENCY, DISCIPLINE, RESILIENCE, CRAFTSMANSHIP, HUMILITY, ALLIANCE, EXPLICITNESS */
+
 package config
 
 import (
 	"os"
-
-	"github.com/pelletier/go-toml/v2"
+	"strconv"
 )
 
 // Config represents the configuration structure.
 type Config struct {
 	Service struct {
-		LogDir                 string  `toml:"log_dir"`
-		Workers                int     `toml:"workers"`
-		DPI                    int     `toml:"dpi"`
-		BlankFuzzPercent       int     `toml:"blank_fuzz_percent"`
-		BlankNonWhiteThreshold float64 `toml:"blank_non_white_threshold"`
-	} `toml:"service"`
-	Voices map[string]string `toml:"voices"`
-	LLM    struct {
-		APIKeyVariable                string  `toml:"api_key_variable"`
-		Model                         string  `toml:"model"`
-		TextDirectiveGenerationPrompt string  `toml:"text_directive_generation_prompt"`
-		MusicConfigGenerationPrompt   string  `toml:"music_config_generation_prompt"`
-		TimeoutSeconds                int     `toml:"timeout_seconds"`
-		Temperature                   float64 `toml:"temperature"`
-	} `toml:"llm"`
-	NATS struct {
-		URL        string `toml:"url"`
-		DLQSubject string `toml:"dlq_subject"`
-		Consumer   struct {
-			Stream  string `toml:"stream"`
-			Subject string `toml:"subject"`
-			Durable string `toml:"durable"`
-		} `toml:"consumer"`
-		Producer struct {
-			Stream                      string `toml:"stream"`
-			Subject                     string `toml:"subject"`
-			PDFProcessingStartedSubject string `toml:"pdf_processing_started_subject"`
-		} `toml:"producer"`
-		ObjectStore struct {
-			PDFBucket string `toml:"pdf_bucket"`
-			PNGBucket string `toml:"png_bucket"`
-		} `toml:"object_store"`
-	} `toml:"nats"`
+		LogDir                 string
+		Workers                int
+		DPI                    int
+		BlankFuzzPercent       int
+		BlankNonWhiteThreshold float64
+	}
+	LLM struct {
+		APIKeyVariable                string
+		Model                         string
+		TextDirectiveGenerationPrompt string
+		MusicConfigGenerationPrompt   string
+		MaxRetries                    int
+		TimeoutSeconds                int
+		Temperature                   float64
+	}
+	NATS NATSConfig
 }
 
-// Load reads and parses the project.toml file.
-func Load(path string) (*Config, error) {
-	file, error := os.Open(path)
-	if error != nil {
-		return nil, error
-	}
-	defer func() { _ = file.Close() }()
+// NATSConfig supplies the connection information for the message queue.
+type NATSConfig struct {
+	Address string
+}
 
+// Load retrieves the configuration from environment variables.
+func Load(_ string) (*Config, error) {
 	var configuration Config
-	decoder := toml.NewDecoder(file)
-	if error := decoder.Decode(&configuration); error != nil {
-		return nil, error
-	}
 
-	// Apply Environment Overrides
-	if natsURL := os.Getenv("NATS_URL"); natsURL != "" {
-		configuration.NATS.URL = natsURL
-	}
+	// Service
+	configuration.Service.LogDir = getEnv("PDF_TO_PNG_LOG_DIR", "/home/niko/development/logs/tts-logs")
+	configuration.Service.Workers = getEnvInt("PDF_TO_PNG_WORKERS", 4)
+	configuration.Service.DPI = getEnvInt("PDF_TO_PNG_DPI", 300)
+	configuration.Service.BlankFuzzPercent = getEnvInt("PDF_TO_PNG_BLANK_FUZZ_PERCENT", 5)
+	configuration.Service.BlankNonWhiteThreshold = getEnvFloat("PDF_TO_PNG_BLANK_NON_WHITE_THRESHOLD", 0.005)
+
+	// LLM
+	configuration.LLM.APIKeyVariable = "GEMINI_API_KEY"
+	configuration.LLM.Model = getEnv("PDF_TO_PNG_LLM_MODEL", "gemini-2.5-flash")
+	configuration.LLM.MaxRetries = getEnvInt("PDF_TO_PNG_MAX_RETRIES", 3)
+	configuration.LLM.TimeoutSeconds = getEnvInt("PDF_TO_PNG_TIMEOUT_SECONDS", 60)
+	configuration.LLM.Temperature = getEnvFloat("PDF_TO_PNG_TEMPERATURE", 0.5)
+	configuration.LLM.TextDirectiveGenerationPrompt = os.Getenv("PDF_TO_PNG_TEXT_DIRECTIVE_GENERATION_PROMPT")
+	configuration.LLM.MusicConfigGenerationPrompt = os.Getenv("PDF_TO_PNG_MUSIC_CONFIG_GENERATION_PROMPT")
+
+	// NATS
+	configuration.NATS.Address = getEnv("NATS_ADDRESS", "nats://localhost:4222")
 
 	return &configuration, nil
+}
+
+func getEnv(key, fallback string) string {
+	if value, exists := os.LookupEnv(key); exists {
+		return value
+	}
+	return fallback
+}
+
+func getEnvInt(key string, fallback int) int {
+	valueStr := getEnv(key, "")
+	if valueStr == "" {
+		return fallback
+	}
+	value, err := strconv.Atoi(valueStr)
+	if err != nil {
+		return fallback
+	}
+	return value
+}
+
+func getEnvFloat(key string, fallback float64) float64 {
+	valueStr := getEnv(key, "")
+	if valueStr == "" {
+		return fallback
+	}
+	value, err := strconv.ParseFloat(valueStr, 64)
+	if err != nil {
+		return fallback
+	}
+	return value
 }

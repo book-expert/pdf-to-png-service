@@ -1,5 +1,3 @@
-// DO EVERYTHING WITH LOVE, CARE, HONESTY, TRUTH, TRUST, KINDNESS, RELIABILITY, CONSISTENCY, DISCIPLINE, RESILIENCE, CRAFTSMANSHIP, HUMILITY, ALLIANCE, EXPLICITNESS
-
 /* DO EVERYTHING WITH LOVE, CARE, HONESTY, TRUTH, TRUST, KINDNESS, RELIABILITY, CONSISTENCY, DISCIPLINE, RESILIENCE, CRAFTSMANSHIP, HUMILITY, ALLIANCE, EXPLICITNESS */
 
 package worker
@@ -116,13 +114,9 @@ func (pdfWorker *Worker) executeWorkflow(parentContext context.Context, event *e
 	}
 
 	// 3. Process Job Settings (Extract Audio Session Config if not present)
-	// If settings are present, we propagate them. We also inject the parsed voice config.
+	// If settings are present, we propagate them.
 	if event.Settings != nil && event.Settings.Voice != "" && (event.Settings.AudioSessionConfig == nil || event.Settings.AudioSessionConfig.VoiceIdentifier == "") {
 		voiceIdentifier, voiceStyle := pdfWorker.parseVoice(event.Settings.Voice)
-		var voiceTrait string
-		if trait, ok := pdfWorker.configuration.Voices[voiceIdentifier]; ok {
-			voiceTrait = trait
-		}
 
 		if event.Settings.AudioSessionConfig == nil {
 			event.Settings.AudioSessionConfig = &events.AudioSessionConfig{}
@@ -132,10 +126,6 @@ func (pdfWorker *Worker) executeWorkflow(parentContext context.Context, event *e
 		event.Settings.AudioSessionConfig.SourceDocumentIdentifier = event.PdfKey
 		event.Settings.AudioSessionConfig.VoiceIdentifier = voiceIdentifier
 		event.Settings.AudioSessionConfig.VoiceStyle = voiceStyle
-		// Injected trait if we have one locally, otherwise UI provides it
-		if event.Settings.AudioSessionConfig.TextDirective == "" {
-			event.Settings.AudioSessionConfig.TextDirective = voiceTrait
-		}
 	}
 
 	// 4. Upload each page and publish event
@@ -194,9 +184,10 @@ func (pdfWorker *Worker) parseVoice(voice string) (voiceIdentifier, voiceStyle s
 	start := -1
 	end := -1
 	for index, character := range voice {
-		if character == '(' {
+		switch character {
+		case '(':
 			start = index
-		} else if character == ')' {
+		case ')':
 			end = index
 		}
 	}
