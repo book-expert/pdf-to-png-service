@@ -89,12 +89,18 @@ func (processor *Processor) handleMessage(requestContext context.Context, event 
 
 	processor.serviceLogger.Infof("Processing PDF: %s", event.PdfKey)
 
+	// Signal PDF Started
+	processor.publishSimpleLifecycleEvent(parentContext, event.Header, events.SubjectPdfStarted)
+
 	if workflowExecutionError := processor.executeWorkflow(parentContext, event); workflowExecutionError != nil {
 		processor.serviceLogger.Errorf("Workflow failed for %s: %v", event.PdfKey, workflowExecutionError)
 		// Nak with delay to allow retry
 		_ = message.NakWithDelay(10 * time.Second)
 		return workflowExecutionError
 	}
+
+	// Signal PDF Completed
+	processor.publishSimpleLifecycleEvent(parentContext, event.Header, events.SubjectPdfCompleted)
 
 	processor.serviceLogger.Successf("Completed: %s", event.PdfKey)
 	return nil
@@ -127,13 +133,25 @@ func (processor *Processor) executeWorkflow(parentContext context.Context, event
 		event.Settings.AudioSessionConfig.VoiceStyle = voiceStyle
 	}
 
-	// 4. Upload each page and publish event
+	// 4. Lifecycle: PNGs Initialized
+	for index := range pages {
+		processor.publishPngLifecycleEvent(parentContext, event.Header, index+1, len(pages), events.SubjectPngInitialized)
+	}
+
+	// 5. Upload each page and publish events
 	for index, pngContent := range pages {
-		pngKey := fmt.Sprintf("%s-%d.png", event.PdfKey, index+1)
+		pageNumber := index + 1
+		total := len(pages)
+
+		// Signal PNG Started
+		processor.publishPngLifecycleEvent(parentContext, event.Header, pageNumber, total, events.SubjectPngStarted)
+
+		pngKey := fmt.Sprintf("%s-%d.png", event.PdfKey, pageNumber)
 		if _, uploadError := processor.pngObjectStore.PutBytes(parentContext, pngKey, pngContent); uploadError != nil {
-			return fmt.Errorf("upload page %d failed: %w", index+1, uploadError)
+			return fmt.Errorf("upload page %d failed: %w", pageNumber, uploadError)
 		}
 
+		// Signal PNG Created (triggers next step)
 		completionEvent := events.PngCreatedEvent{
 			Header: events.EventHeader{
 				WorkflowIdentifier: event.Header.WorkflowIdentifier,
@@ -143,18 +161,51 @@ func (processor *Processor) executeWorkflow(parentContext context.Context, event
 				Timestamp:          time.Now().UTC(),
 			},
 			PngKey:     pngKey,
-			PageNumber: index + 1,
-			TotalPages: len(pages),
+			PageNumber: pageNumber,
+			TotalPages: total,
 			Settings:   event.Settings,
 		}
 
 		data, _ := json.Marshal(completionEvent)
 		if _, publishError := processor.jetStreamPublisher.Publish(parentContext, processor.producerSubject, data); publishError != nil {
-			return fmt.Errorf("publish page %d failed: %w", index+1, publishError)
+			return fmt.Errorf("publish page %d failed: %w", pageNumber, publishError)
 		}
+
+		// Signal PNG Completed
+		processor.publishPngLifecycleEvent(parentContext, event.Header, pageNumber, total, events.SubjectPngCompleted)
 	}
 
 	return nil
+}
+
+func (processor *Processor) publishSimpleLifecycleEvent(ctx context.Context, header events.EventHeader, subject string) {
+	lifecycleEvent := events.StartedEvent{
+		Header: events.EventHeader{
+			WorkflowIdentifier: header.WorkflowIdentifier,
+			UserIdentifier:     header.UserIdentifier,
+			TenantIdentifier:   header.TenantIdentifier,
+			EventIdentifier:    uuid.New().String(),
+			Timestamp:          time.Now().UTC(),
+		},
+	}
+	data, _ := json.Marshal(lifecycleEvent)
+	_, _ = processor.jetStreamPublisher.Publish(ctx, subject, data)
+}
+
+func (processor *Processor) publishPngLifecycleEvent(ctx context.Context, header events.EventHeader, page, total int, subject string) {
+	lifecycleEvent := events.PngCreatedEvent{
+		Header: events.EventHeader{
+			WorkflowIdentifier: header.WorkflowIdentifier,
+			UserIdentifier:     header.UserIdentifier,
+			TenantIdentifier:   header.TenantIdentifier,
+			EventIdentifier:    uuid.New().String(),
+			Timestamp:          time.Now().UTC(),
+		},
+		PageNumber: page,
+		TotalPages: total,
+	}
+	data, _ := json.Marshal(lifecycleEvent)
+	_, _ = processor.jetStreamPublisher.Publish(ctx, subject, data)
 }
 
 func (processor *Processor) downloadPDF(parentContext context.Context, pdfKey string) ([]byte, error) {
