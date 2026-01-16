@@ -13,7 +13,7 @@ import (
 	"github.com/book-expert/logger"
 	"github.com/book-expert/pdf-to-png-service/internal/config"
 	"github.com/book-expert/pdf-to-png-service/internal/pdfrender"
-	pdfworker "github.com/book-expert/pdf-to-png-service/internal/worker"
+	"github.com/book-expert/pdf-to-png-service/internal/processor"
 	"github.com/nats-io/nats.go"
 	"github.com/nats-io/nats.go/jetstream"
 )
@@ -82,7 +82,7 @@ func run(parentContext context.Context, configuration *config.Config, appLogger 
 		appLogger,
 	)
 
-	processorInstance, processorError := pdfworker.NewProcessor(
+	processorInstance, processorError := processor.NewProcessor(
 		natsConnection,
 		jetStreamContext,
 		jetStreamContext,
