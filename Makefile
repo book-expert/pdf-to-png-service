@@ -16,7 +16,7 @@ all: build test lint
 # Build the service
 build:
 	@echo "Building $(BINARY)..."
-	go build -o ./$(BINARY) ./cmd/pdf-to-png-service
+	go build $(BUILD_FLAGS) -o ./$(BINARY) ./cmd/pdf-to-png-service
 
 # Install binary to ~/bin
 install: build
