@@ -3,7 +3,7 @@ module github.com/book-expert/pdf-to-png-service
 go 1.25.5
 
 require (
-	github.com/book-expert/common-events v0.0.7
+	github.com/book-expert/common-events v0.0.9
 	github.com/book-expert/common-worker v0.0.7
 	github.com/book-expert/logger v0.1.4
 	github.com/gen2brain/go-fitz v1.24.15

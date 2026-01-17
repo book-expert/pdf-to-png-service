@@ -6,8 +6,8 @@ cloud.google.com/go/auth v0.9.3/go.mod h1:7z6VY+7h3KUdRov5F1i8NDP5ZzWKYmEPO842Bg
 cloud.google.com/go/compute/metadata v0.5.0 h1:Zr0eK8JbFv6+Wi4ilXAR8FJ3wyNdpxHKJNPos6LTZOY=
 cloud.google.com/go/compute/metadata v0.5.0/go.mod h1:aHnloV2TPI38yx4s9+wAZhHykWvVCfu7hQbF+9CWoiY=
 github.com/BurntSushi/toml v0.3.1/go.mod h1:xHWCNGjB5oqiDr8zfno3MHue2Ht5sIBksp03qcyfWMU=
-github.com/book-expert/common-events v0.0.7 h1:Nb/m/ys4QDY/SFkOX3oeBHhMm7URTpy+IzzgRCwa374=
-github.com/book-expert/common-events v0.0.7/go.mod h1:ceITZRhfiQ9EuOMpJ6DStvwsE6ujxUCONj5JvXOR9Zk=
+github.com/book-expert/common-events v0.0.9 h1:KeR55QtmzxkPWSZBtcg5woe99jM632oabLf+4zi6OKs=
+github.com/book-expert/common-events v0.0.9/go.mod h1:ceITZRhfiQ9EuOMpJ6DStvwsE6ujxUCONj5JvXOR9Zk=
 github.com/book-expert/common-worker v0.0.7 h1:q+2T+XmQEtAs2wxLtCRe5opTpNACbJPgf4AxlJm+ng4=
 github.com/book-expert/common-worker v0.0.7/go.mod h1:bzRcanfBTXMLD3lkHXEzC7Oc7kfDJ6QgTqf8L9Hf2oY=
 github.com/book-expert/logger v0.1.4 h1:MjnNXxZ7cNV3d1vd+/hd1XBNE8+RTRxyTYubE58sPnM=
