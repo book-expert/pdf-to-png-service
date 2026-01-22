@@ -18,6 +18,7 @@ type Config struct {
 	}
 	LLM struct {
 		APIKeyEnvironmentVariable     string
+		BaseAddress                   string
 		Model                         string
 		TextDirectiveGenerationPrompt string
 		MusicConfigGenerationPrompt   string
@@ -40,12 +41,13 @@ func Load(_ string) (*Config, error) {
 	// Service
 	configuration.Service.LogDirectory = getEnvironmentVariable("PDF_TO_PNG_LOG_DIR", "/home/niko/development/logs/tts-logs")
 	configuration.Service.Workers = getEnvironmentVariableAsInteger("PDF_TO_PNG_WORKERS", 4)
-	configuration.Service.DotsPerInch = getEnvironmentVariableAsInteger("PDF_TO_PNG_DPI", 300)
+	configuration.Service.DotsPerInch = getEnvironmentVariableAsInteger("PDF_TO_PNG_DPI", 200)
 	configuration.Service.BlankFuzzPercent = getEnvironmentVariableAsInteger("PDF_TO_PNG_BLANK_FUZZ_PERCENT", 5)
 	configuration.Service.BlankNonWhiteThreshold = getEnvironmentVariableAsFloat("PDF_TO_PNG_BLANK_NON_WHITE_THRESHOLD", 0.005)
 
 	// LLM
 	configuration.LLM.APIKeyEnvironmentVariable = "GEMINI_API_KEY"
+	configuration.LLM.BaseAddress = getEnvironmentVariable("GEMINI_BASE_ADDRESS", "https://generativelanguage.googleapis.com")
 	configuration.LLM.Model = getEnvironmentVariable("PDF_TO_PNG_LLM_MODEL", "gemini-2.5-flash")
 	configuration.LLM.MaxRetries = getEnvironmentVariableAsInteger("PDF_TO_PNG_MAX_RETRIES", 3)
 	configuration.LLM.TimeoutSeconds = getEnvironmentVariableAsInteger("PDF_TO_PNG_TIMEOUT_SECONDS", 60)

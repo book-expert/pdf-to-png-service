@@ -16,11 +16,13 @@ import (
 
 type PageProcessor struct {
 	serviceLogger *logger.Logger
+	dotsPerInch   int
 }
 
-func NewPageProcessor(serviceLogger *logger.Logger, _ string) *PageProcessor {
+func NewPageProcessor(serviceLogger *logger.Logger, dotsPerInch int) *PageProcessor {
 	return &PageProcessor{
 		serviceLogger: serviceLogger,
+		dotsPerInch:   dotsPerInch,
 	}
 }
 
@@ -60,14 +62,15 @@ func (pageProcessor *PageProcessor) ProcessPagesFromBytes(parentContext context.
 					}
 				}()
 
-				image, renderError := localDocument.Image(pageIndex)
+				image, renderError := localDocument.ImageDPI(pageIndex, float64(pageProcessor.dotsPerInch))
 				if renderError != nil {
 					results <- renderResult{error: renderError}
 					return
 				}
 
 				var buffer bytes.Buffer
-				if encodeError := png.Encode(&buffer, image); encodeError != nil {
+				encoder := png.Encoder{CompressionLevel: png.BestCompression}
+				if encodeError := encoder.Encode(&buffer, image); encodeError != nil {
 					results <- renderResult{error: fmt.Errorf("png encode failed: %w", encodeError)}
 					return
 				}
