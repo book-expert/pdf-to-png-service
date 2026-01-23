@@ -6,6 +6,7 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
+	"io"
 	"strings"
 	"time"
 
@@ -87,10 +88,24 @@ func (processor *Processor) handleMessage(requestContext context.Context, event 
 	parentContext, cancelProcessing := context.WithTimeout(requestContext, MessageProcessingTimeout)
 	defer cancelProcessing()
 
+	if event.PdfKey == "" {
+		processor.serviceLogger.Errorf("Received event with empty PdfKey for Workflow %s", event.Header.WorkflowIdentifier)
+		_ = message.Term()
+		return fmt.Errorf("empty PdfKey")
+	}
+
 	processor.serviceLogger.Infof("Processing PDF: %s", event.PdfKey)
 
-	// Signal PDF Started
-	processor.publishSimpleLifecycleEvent(parentContext, event.Header, events.SubjectPdfStarted)
+	// Lifecycle: Initialized
+	processor.publishSimpleLifecycleEvent(parentContext, event.Header, events.SubjectPdfInitialized)
+
+	// Routing: Check if this job is designated for Summary Only processing.
+	// If so, the PDF-to-PNG conversion is strictly bypassed as the summary flow
+	// uses the text generation path directly.
+	if event.Settings != nil && event.Settings.ProcessSummaryOnly {
+		processor.serviceLogger.Infof("Bypassing PDF rendering for Summary-Only Job: %s", event.PdfKey)
+		return nil
+	}
 
 	if workflowExecutionError := processor.executeWorkflow(parentContext, event); workflowExecutionError != nil {
 		processor.serviceLogger.Errorf("Workflow failed for %s: %v", event.PdfKey, workflowExecutionError)
@@ -99,7 +114,7 @@ func (processor *Processor) handleMessage(requestContext context.Context, event 
 		return workflowExecutionError
 	}
 
-	// Signal PDF Completed
+	// Lifecycle: Completed
 	processor.publishSimpleLifecycleEvent(parentContext, event.Header, events.SubjectPdfCompleted)
 
 	processor.serviceLogger.Successf("Completed: %s", event.PdfKey)
@@ -107,11 +122,17 @@ func (processor *Processor) handleMessage(requestContext context.Context, event 
 }
 
 func (processor *Processor) executeWorkflow(parentContext context.Context, event *events.PdfCreatedEvent) error {
+	// Lifecycle: Ready
+	processor.publishSimpleLifecycleEvent(parentContext, event.Header, events.SubjectPdfReady)
+
 	// 1. Download PDF
 	pdfData, downloadError := processor.downloadPDF(parentContext, event.PdfKey)
 	if downloadError != nil {
 		return fmt.Errorf("download failed: %w", downloadError)
 	}
+
+	// Lifecycle: Started
+	processor.publishSimpleLifecycleEvent(parentContext, event.Header, events.SubjectPdfStarted)
 
 	// 2. Render PNGs
 	pages, renderingError := processor.pdfRenderer.ProcessSinglePDFFromBytes(parentContext, pdfData)
@@ -135,7 +156,7 @@ func (processor *Processor) executeWorkflow(parentContext context.Context, event
 
 	// 4. Lifecycle: PNGs Initialized
 	for index := range pages {
-		processor.publishPngLifecycleEvent(parentContext, event.Header, index+1, len(pages), events.SubjectPngInitialized)
+		processor.publishPngLifecycleEvent(parentContext, event.Header, index+1, len(pages), "", events.SubjectPngInitialized)
 	}
 
 	// 5. Upload each page and publish events
@@ -143,15 +164,18 @@ func (processor *Processor) executeWorkflow(parentContext context.Context, event
 		pageNumber := index + 1
 		total := len(pages)
 
-		// Signal PNG Started
-		processor.publishPngLifecycleEvent(parentContext, event.Header, pageNumber, total, events.SubjectPngStarted)
+		// Lifecycle: PNG Ready
+		processor.publishPngLifecycleEvent(parentContext, event.Header, pageNumber, total, "", events.SubjectPngReady)
+
+		// Lifecycle: PNG Started
+		processor.publishPngLifecycleEvent(parentContext, event.Header, pageNumber, total, "", events.SubjectPngStarted)
 
 		pngKey := fmt.Sprintf("%s-%d.png", event.PdfKey, pageNumber)
 		if _, uploadError := processor.pngObjectStore.PutBytes(parentContext, pngKey, pngContent); uploadError != nil {
 			return fmt.Errorf("upload page %d failed: %w", pageNumber, uploadError)
 		}
 
-		// Signal PNG Created (triggers next step)
+		// Lifecycle: PNG Created (triggers next step)
 		completionEvent := events.PngCreatedEvent{
 			Header: events.EventHeader{
 				WorkflowIdentifier: event.Header.WorkflowIdentifier,
@@ -171,8 +195,8 @@ func (processor *Processor) executeWorkflow(parentContext context.Context, event
 			return fmt.Errorf("publish page %d failed: %w", pageNumber, publishError)
 		}
 
-		// Signal PNG Completed
-		processor.publishPngLifecycleEvent(parentContext, event.Header, pageNumber, total, events.SubjectPngCompleted)
+		// Lifecycle: PNG Completed
+		processor.publishPngLifecycleEvent(parentContext, event.Header, pageNumber, total, pngKey, events.SubjectPngCompleted)
 	}
 
 	return nil
@@ -192,7 +216,7 @@ func (processor *Processor) publishSimpleLifecycleEvent(ctx context.Context, hea
 	_, _ = processor.jetStreamPublisher.Publish(ctx, subject, data)
 }
 
-func (processor *Processor) publishPngLifecycleEvent(ctx context.Context, header events.EventHeader, page, total int, subject string) {
+func (processor *Processor) publishPngLifecycleEvent(ctx context.Context, header events.EventHeader, page, total int, pngKey, subject string) {
 	lifecycleEvent := events.PngCreatedEvent{
 		Header: events.EventHeader{
 			WorkflowIdentifier: header.WorkflowIdentifier,
@@ -201,6 +225,7 @@ func (processor *Processor) publishPngLifecycleEvent(ctx context.Context, header
 			EventIdentifier:    uuid.New().String(),
 			Timestamp:          time.Now().UTC(),
 		},
+		PngKey:     pngKey,
 		PageNumber: page,
 		TotalPages: total,
 	}
@@ -217,10 +242,11 @@ func (processor *Processor) downloadPDF(parentContext context.Context, pdfKey st
 		_ = object.Close()
 	}()
 
-	information, _ := object.Info()
-	data := make([]byte, information.Size)
-	_, readError := object.Read(data)
-	return data, readError
+	data, readError := io.ReadAll(object)
+	if readError != nil {
+		return nil, fmt.Errorf("failed to read PDF object: %w", readError)
+	}
+	return data, nil
 }
 
 func (processor *Processor) parseVoice(voice string) (voiceIdentifier, voiceStyle string) {

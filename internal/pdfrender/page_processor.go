@@ -33,15 +33,17 @@ func (pageProcessor *PageProcessor) ProcessPagesFromBytes(parentContext context.
 	// We use a unique ID to avoid collisions between workers.
 	runID := uuid.New().String()
 	shmDir := filepath.Join("/dev/shm", "pdf-render-"+runID)
-	
-	if err := os.MkdirAll(shmDir, 0755); err != nil {
+
+	if err := os.MkdirAll(shmDir, 0o755); err != nil {
 		return nil, fmt.Errorf("failed to create shm directory: %w", err)
 	}
-	defer os.RemoveAll(shmDir)
+	defer func() {
+		_ = os.RemoveAll(shmDir)
+	}()
 
 	// 2. Write PDF data to the RAM disk
 	pdfFilePath := filepath.Join(shmDir, "input.pdf")
-	if err := os.WriteFile(pdfFilePath, pdfData, 0644); err != nil {
+	if err := os.WriteFile(pdfFilePath, pdfData, 0o644); err != nil {
 		return nil, fmt.Errorf("failed to write PDF to shm: %w", err)
 	}
 
@@ -49,7 +51,7 @@ func (pageProcessor *PageProcessor) ProcessPagesFromBytes(parentContext context.
 	// -sDEVICE=png16m: 24-bit color PNG (opaque, solves transparency issues)
 	// -o: Sets output file and implies -dBATCH -dNOPAUSE
 	outputPattern := filepath.Join(shmDir, "page-%d.png")
-	
+
 	args := []string{
 		"-sDEVICE=png16m",
 		"-r" + strconv.Itoa(pageProcessor.dotsPerInch),
@@ -58,7 +60,7 @@ func (pageProcessor *PageProcessor) ProcessPagesFromBytes(parentContext context.
 	}
 
 	cmd := exec.CommandContext(parentContext, "gs", args...)
-	
+
 	// Execute and capture output for diagnostics
 	output, err := cmd.CombinedOutput()
 	if err != nil {
