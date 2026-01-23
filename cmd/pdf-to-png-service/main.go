@@ -87,7 +87,7 @@ func run(parentContext context.Context, configuration *config.Config, appLogger 
 		jetStreamContext,
 		jetStreamContext,
 		events.StreamPdfFiles,
-		events.SubjectPdfCreated,
+		events.SubjectPdfAnalyzed,
 		"pdf-to-png-consumer",
 		events.SubjectPngCreated,
 		pdfObjectStore,

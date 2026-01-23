@@ -16,16 +16,6 @@ type Config struct {
 		BlankFuzzPercent       int
 		BlankNonWhiteThreshold float64
 	}
-	LLM struct {
-		APIKeyEnvironmentVariable     string
-		BaseAddress                   string
-		Model                         string
-		TextDirectiveGenerationPrompt string
-		MusicConfigGenerationPrompt   string
-		MaxRetries                    int
-		TimeoutSeconds                int
-		Temperature                   float64
-	}
 	NATS NATSConfig
 }
 
@@ -44,16 +34,6 @@ func Load(_ string) (*Config, error) {
 	configuration.Service.DotsPerInch = getEnvironmentVariableAsInteger("PDF_TO_PNG_DPI", 200)
 	configuration.Service.BlankFuzzPercent = getEnvironmentVariableAsInteger("PDF_TO_PNG_BLANK_FUZZ_PERCENT", 5)
 	configuration.Service.BlankNonWhiteThreshold = getEnvironmentVariableAsFloat("PDF_TO_PNG_BLANK_NON_WHITE_THRESHOLD", 0.005)
-
-	// LLM
-	configuration.LLM.APIKeyEnvironmentVariable = "GEMINI_API_KEY"
-	configuration.LLM.BaseAddress = getEnvironmentVariable("GEMINI_BASE_ADDRESS", "https://generativelanguage.googleapis.com")
-	configuration.LLM.Model = getEnvironmentVariable("PDF_TO_PNG_LLM_MODEL", "gemini-2.5-flash")
-	configuration.LLM.MaxRetries = getEnvironmentVariableAsInteger("PDF_TO_PNG_MAX_RETRIES", 3)
-	configuration.LLM.TimeoutSeconds = getEnvironmentVariableAsInteger("PDF_TO_PNG_TIMEOUT_SECONDS", 60)
-	configuration.LLM.Temperature = getEnvironmentVariableAsFloat("PDF_TO_PNG_TEMPERATURE", 0.5)
-	configuration.LLM.TextDirectiveGenerationPrompt = os.Getenv("PDF_TO_PNG_TEXT_DIRECTIVE_GENERATION_PROMPT")
-	configuration.LLM.MusicConfigGenerationPrompt = os.Getenv("PDF_TO_PNG_MUSIC_CONFIG_GENERATION_PROMPT")
 
 	// NATS
 	configuration.NATS.Address = getEnvironmentVariable("NATS_ADDRESS", "nats://localhost:4222")

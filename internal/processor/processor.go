@@ -32,7 +32,7 @@ type JetStreamPublisher interface {
 
 // Processor coordinates the conversion of PDF documents into PNG image sequences.
 type Processor struct {
-	engine             *worker.Worker[*events.PdfCreatedEvent]
+	engine             *worker.Worker[*events.PdfAnalyzedEvent]
 	jetStreamPublisher JetStreamPublisher
 	producerSubject    string
 	pdfObjectStore     jetstream.ObjectStore
@@ -84,7 +84,7 @@ func (processor *Processor) Start(systemContext context.Context) error {
 	return processor.engine.Start(systemContext)
 }
 
-func (processor *Processor) handleMessage(requestContext context.Context, event *events.PdfCreatedEvent, message jetstream.Msg) error {
+func (processor *Processor) handleMessage(requestContext context.Context, event *events.PdfAnalyzedEvent, message jetstream.Msg) error {
 	parentContext, cancelProcessing := context.WithTimeout(requestContext, MessageProcessingTimeout)
 	defer cancelProcessing()
 
@@ -121,7 +121,7 @@ func (processor *Processor) handleMessage(requestContext context.Context, event 
 	return nil
 }
 
-func (processor *Processor) executeWorkflow(parentContext context.Context, event *events.PdfCreatedEvent) error {
+func (processor *Processor) executeWorkflow(parentContext context.Context, event *events.PdfAnalyzedEvent) error {
 	// Lifecycle: Ready
 	processor.publishSimpleLifecycleEvent(parentContext, event.Header, events.SubjectPdfReady)
 
@@ -184,10 +184,11 @@ func (processor *Processor) executeWorkflow(parentContext context.Context, event
 				EventIdentifier:    uuid.New().String(),
 				Timestamp:          time.Now().UTC(),
 			},
-			PngKey:     pngKey,
-			PageNumber: pageNumber,
-			TotalPages: total,
-			Settings:   event.Settings,
+			PngKey:        pngKey,
+			PageNumber:    pageNumber,
+			TotalPages:    total,
+			Settings:      event.Settings,
+			RefinedPrompt: event.RefinedPrompt,
 		}
 
 		data, _ := json.Marshal(completionEvent)

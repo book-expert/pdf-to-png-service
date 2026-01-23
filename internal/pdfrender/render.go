@@ -20,10 +20,8 @@ const (
 	DefaultBlankNonWhiteThreshold = 0.005
 )
 
-var (
-	// ErrPDFZeroOrNegativePages is returned when a PDF has invalid page count.
-	ErrPDFZeroOrNegativePages = errors.New("pdf has zero or a negative number of pages")
-)
+// ErrPDFZeroOrNegativePages is returned when a PDF has invalid page count.
+var ErrPDFZeroOrNegativePages = errors.New("pdf has zero or a negative number of pages")
 
 // Options holds all configurable parameters for a Processor.
 type Options struct {
