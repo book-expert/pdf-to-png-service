@@ -3,26 +3,17 @@
 package pdfrender
 
 import (
-	"bufio"
-	"bytes"
 	"context"
 	"errors"
-	"fmt"
 	"io"
 	"os"
-	"os/exec"
 	"runtime"
-	"strconv"
-	"strings"
 
 	"github.com/book-expert/logger"
 )
 
-// Define command constants to avoid magic strings and allow easy updates.
+// Define command constants.
 const (
-	CommandPDFInfo     = "pdfinfo"
-	CommandGhostScript = "ghostscript"
-
 	// Default configuration values.
 	DefaultDotsPerInch            = 200
 	DefaultBlankFuzzPercent       = 5
@@ -32,10 +23,6 @@ const (
 var (
 	// ErrPDFZeroOrNegativePages is returned when a PDF has invalid page count.
 	ErrPDFZeroOrNegativePages = errors.New("pdf has zero or a negative number of pages")
-	// ErrPageNumberMustBePositive is returned when a page number is zero or negative.
-	ErrPageNumberMustBePositive = errors.New("page number must be positive")
-	// ErrCouldNotParsePagesLine is returned when pdfinfo output cannot be parsed.
-	ErrCouldNotParsePagesLine = errors.New("could not parse 'Pages:' line from pdfinfo output")
 )
 
 // Options holds all configurable parameters for a Processor.
@@ -47,7 +34,7 @@ type Options struct {
 	BlankNonWhiteThreshold float64
 }
 
-// Processor encapsulates the logic for processing a batch of PDF files.
+// Processor encapsulates the logic for processing a batch of PDF files using Ghostscript.
 type Processor struct {
 	serviceLogger *logger.Logger
 	configuration Options
@@ -99,66 +86,14 @@ func resolvePositiveFloat(value, defaultValue float64) float64 {
 	return value
 }
 
-// ProcessSinglePDFFromBytes converts a single PDF file from a byte slice to PNGs.
+// ProcessSinglePDFFromBytes converts a single PDF file from a byte slice to PNGs using Ghostscript.
 func (processor *Processor) ProcessSinglePDFFromBytes(parentContext context.Context, pdfData []byte) ([][]byte, error) {
-	pageCount, lookupError := processor.getPDFPageCount(parentContext, pdfData)
-	if lookupError != nil {
-		return nil, fmt.Errorf("could not get page count: %w", lookupError)
-	}
+	pageProcessor := NewPageProcessor(processor.serviceLogger, processor.configuration.DotsPerInch)
 
-	if pageCount <= 0 {
-		return nil, ErrPDFZeroOrNegativePages
-	}
-
-	processor.serviceLogger.Infof("Rendering %d pages", pageCount)
-
-	pageProcessor := NewPageProcessor(processor.serviceLogger, "")
-
-	pngImages, processingError := pageProcessor.ProcessPagesFromBytes(parentContext, pdfData, pageCount)
+	pngImages, processingError := pageProcessor.ProcessPagesFromBytes(parentContext, pdfData)
 	if processingError != nil {
 		return nil, processingError
 	}
 
 	return pngImages, nil
-}
-
-// getPDFPageCount executes the `pdfinfo` command to determine the number of pages.
-func (processor *Processor) getPDFPageCount(parentContext context.Context, pdfData []byte) (int, error) {
-	pdfInfoCommand := exec.CommandContext(parentContext, CommandPDFInfo, "-")
-	pdfInfoCommand.Stdin = bytes.NewReader(pdfData)
-
-	commandOutput, executionError := pdfInfoCommand.CombinedOutput()
-	if executionError != nil {
-		return 0, fmt.Errorf(
-			"pdfinfo execution failed: %w. Output: %s",
-			executionError,
-			string(commandOutput),
-		)
-	}
-
-	return parsePdfInfoOutput(string(commandOutput))
-}
-
-// parsePdfInfoOutput scans the text output from the `pdfinfo` command.
-func parsePdfInfoOutput(output string) (int, error) {
-	outputScanner := bufio.NewScanner(strings.NewReader(output))
-
-	for outputScanner.Scan() {
-		lineText := outputScanner.Text()
-
-		if strings.HasPrefix(lineText, "Pages:") {
-			lineParts := strings.Fields(lineText)
-			if len(lineParts) < 2 {
-				return 0, ErrCouldNotParsePagesLine
-			}
-
-			pageCount, conversionError := strconv.Atoi(lineParts[1])
-			if conversionError != nil {
-				return 0, ErrCouldNotParsePagesLine
-			}
-			return pageCount, nil
-		}
-	}
-
-	return 0, ErrCouldNotParsePagesLine
 }
