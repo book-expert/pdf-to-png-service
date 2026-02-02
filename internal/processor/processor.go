@@ -7,7 +7,6 @@ import (
 	"encoding/json"
 	"fmt"
 	"io"
-	"strings"
 	"time"
 
 	"github.com/book-expert/common-events"
@@ -94,11 +93,6 @@ func (processor *Processor) handleMessage(requestContext context.Context, event 
 		return fmt.Errorf("empty PdfKey")
 	}
 
-	processor.serviceLogger.Infof("Processing PDF: %s", event.PdfKey)
-
-	// Lifecycle: Initialized
-	processor.publishSimpleLifecycleEvent(parentContext, event.Header, events.SubjectPdfInitialized)
-
 	// Routing: Check if this job is designated for Summary Only processing.
 	// If so, the PDF-to-PNG conversion is strictly bypassed as the summary flow
 	// uses the text generation path directly.
@@ -106,6 +100,8 @@ func (processor *Processor) handleMessage(requestContext context.Context, event 
 		processor.serviceLogger.Infof("Bypassing PDF rendering for Summary-Only Job: %s", event.PdfKey)
 		return nil
 	}
+
+	processor.serviceLogger.Infof("Processing PDF: %s", event.PdfKey)
 
 	if workflowExecutionError := processor.executeWorkflow(parentContext, event); workflowExecutionError != nil {
 		processor.serviceLogger.Errorf("Workflow failed for %s: %v", event.PdfKey, workflowExecutionError)
@@ -122,9 +118,6 @@ func (processor *Processor) handleMessage(requestContext context.Context, event 
 }
 
 func (processor *Processor) executeWorkflow(parentContext context.Context, event *events.PdfAnalyzedEvent) error {
-	// Lifecycle: Ready
-	processor.publishSimpleLifecycleEvent(parentContext, event.Header, events.SubjectPdfReady)
-
 	// 1. Download PDF
 	pdfData, downloadError := processor.downloadPDF(parentContext, event.PdfKey)
 	if downloadError != nil {
@@ -138,20 +131,6 @@ func (processor *Processor) executeWorkflow(parentContext context.Context, event
 	pages, renderingError := processor.pdfRenderer.ProcessSinglePDFFromBytes(parentContext, pdfData)
 	if renderingError != nil {
 		return fmt.Errorf("render failed: %w", renderingError)
-	}
-
-	// 3. Process Job Settings (Extract Audio Session Config if not present)
-	if event.Settings != nil && event.Settings.Voice != "" && (event.Settings.AudioSessionConfig == nil || event.Settings.AudioSessionConfig.VoiceIdentifier == "") {
-		voiceIdentifier, voiceStyle := processor.parseVoice(event.Settings.Voice)
-
-		if event.Settings.AudioSessionConfig == nil {
-			event.Settings.AudioSessionConfig = &events.AudioSessionConfig{}
-		}
-
-		event.Settings.AudioSessionConfig.SessionIdentifier = uuid.New().String()
-		event.Settings.AudioSessionConfig.SourceDocumentIdentifier = event.PdfKey
-		event.Settings.AudioSessionConfig.VoiceIdentifier = voiceIdentifier
-		event.Settings.AudioSessionConfig.VoiceStyle = voiceStyle
 	}
 
 	// 4. Lifecycle: PNGs Initialized
@@ -248,29 +227,4 @@ func (processor *Processor) downloadPDF(parentContext context.Context, pdfKey st
 		return nil, fmt.Errorf("failed to read PDF object: %w", readError)
 	}
 	return data, nil
-}
-
-func (processor *Processor) parseVoice(voice string) (voiceIdentifier, voiceStyle string) {
-	if voice == "" {
-		return "", ""
-	}
-
-	start := -1
-	end := -1
-	for index, character := range voice {
-		switch character {
-		case '(':
-			start = index
-		case ')':
-			end = index
-		}
-	}
-
-	if start != -1 && end != -1 && end > start {
-		voiceIdentifier = strings.TrimSpace(voice[:start])
-		voiceStyle = strings.TrimSpace(voice[start+1 : end])
-		return voiceIdentifier, voiceStyle
-	}
-
-	return strings.TrimSpace(voice), ""
 }
